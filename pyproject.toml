@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "meshclaw"
+version = "0.1.0"
+description = "Distributed AI agent orchestration across mesh networks"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.9"
+authors = [
+    {name = "MeshPOP", email = "mpop@mpop.dev"}
+]
+keywords = ["ai", "agent", "distributed", "mesh", "orchestration", "mcp"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Topic :: System :: Distributed Computing",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = []
+
+[project.optional-dependencies]
+meshpop = ["meshpop", "vssh", "meshpop-wire"]
+
+[project.scripts]
+meshclaw = "meshclaw.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/meshpop/meshclaw"
+Repository = "https://github.com/meshpop/meshclaw"
+Issues = "https://github.com/meshpop/meshclaw/issues"
+
+[tool.setuptools.packages.find]
+where = ["src"]
