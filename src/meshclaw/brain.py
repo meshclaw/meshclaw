@@ -628,21 +628,34 @@ class Brain:
             if response["content"]:
                 if self.verbose:
                     print(f"[Brain]: {response['content'][:500]}")
-                messages.append({"role": "assistant", "content": response["content"]})
 
             # No tool calls = brain is done talking
             if not response["tool_calls"]:
                 if response["content"]:
+                    messages.append({"role": "assistant", "content": response["content"]})
                     result.summary = response["content"]
                     result.success = True
                 break
 
-            # Process tool calls
-            # For OpenAI format, add assistant message with tool_calls
-            if self.llm_config.provider in ("openai", "ollama", "custom"):
+            # Process tool calls — add assistant message
+            if self.llm_config.provider == "ollama":
+                # Ollama: pass tool_calls in native format (no "type" wrapper)
                 messages.append({
                     "role": "assistant",
-                    "content": response.get("content", ""),
+                    "content": response.get("content") or "",
+                    "tool_calls": [{
+                        "id": tc["id"],
+                        "function": {
+                            "name": tc["name"],
+                            "arguments": tc["arguments"],
+                        }
+                    } for tc in response["tool_calls"]]
+                })
+            elif self.llm_config.provider in ("openai", "custom"):
+                # OpenAI format: with "type": "function" wrapper
+                messages.append({
+                    "role": "assistant",
+                    "content": response.get("content") or "",
                     "tool_calls": [{
                         "id": tc["id"],
                         "type": "function",
@@ -652,6 +665,19 @@ class Brain:
                         }
                     } for tc in response["tool_calls"]]
                 })
+            elif self.llm_config.provider == "anthropic":
+                # Anthropic: assistant message with tool_use blocks
+                content_blocks = []
+                if response["content"]:
+                    content_blocks.append({"type": "text", "text": response["content"]})
+                for tc in response["tool_calls"]:
+                    content_blocks.append({
+                        "type": "tool_use",
+                        "id": tc["id"],
+                        "name": tc["name"],
+                        "input": tc["arguments"],
+                    })
+                messages.append({"role": "assistant", "content": content_blocks})
 
             for tc in response["tool_calls"]:
                 tool_name = tc["name"]

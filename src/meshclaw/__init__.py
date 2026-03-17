@@ -7,7 +7,7 @@ sequential pipelines, and collaborative multi-agent workflows.
 Built on top of MeshPOP infrastructure (mpop/vssh/wire/meshdb/vault).
 """
 
-__version__ = "0.4.0"
+__version__ = "0.4.2"
 
 from meshclaw.agent import Agent, AgentState
 from meshclaw.task import Task, TaskResult, TaskState
