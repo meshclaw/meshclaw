@@ -7,13 +7,16 @@ sequential pipelines, and collaborative multi-agent workflows.
 Built on top of MeshPOP infrastructure (mpop/vssh/wire/meshdb/vault).
 """
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 from meshclaw.agent import Agent, AgentState
 from meshclaw.task import Task, TaskResult, TaskState
 from meshclaw.orchestrator import Orchestrator
 from meshclaw.scenario import Scenario, ParallelScenario, SequentialScenario, CollaborativeScenario
 from meshclaw.brain import Brain, BrainResult, LLMConfig
+from meshclaw.messenger import (
+    TelegramAdapter, SlackAdapter, DiscordAdapter, WebhookAdapter, create_adapter
+)
 
 __all__ = [
     "Agent", "AgentState",
@@ -21,4 +24,6 @@ __all__ = [
     "Orchestrator",
     "Scenario", "ParallelScenario", "SequentialScenario", "CollaborativeScenario",
     "Brain", "BrainResult", "LLMConfig",
+    "TelegramAdapter", "SlackAdapter", "DiscordAdapter", "WebhookAdapter",
+    "create_adapter",
 ]

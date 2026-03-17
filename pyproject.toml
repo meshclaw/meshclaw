@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "meshclaw"
-version = "0.3.0"
-description = "Distributed AI agent orchestration across mesh networks"
+version = "0.4.0"
+description = "Distributed AI agent orchestration across mesh networks — with messenger support"
 readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.9"

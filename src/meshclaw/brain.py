@@ -577,13 +577,19 @@ class Brain:
         result = brain.run("Check disk space on all servers and alert if any > 80%")
     """
 
+    # Tools that require approval before execution
+    DANGEROUS_TOOLS = {"shell", "write_file", "broadcast"}
+
     def __init__(self, llm_config: LLMConfig = None, orchestrator=None,
-                 max_steps: int = 20, verbose: bool = True):
+                 max_steps: int = 20, verbose: bool = True,
+                 approval_mode: bool = False):
         self.llm_config = llm_config or LLMConfig.from_env()
         self.executor = ToolExecutor(orchestrator=orchestrator)
         self.max_steps = max_steps
         self.verbose = verbose
+        self.approval_mode = approval_mode
         self.on_step = None  # Optional callback: (step_num, action, result) -> None
+        self.approval_callback = None  # (step, tool_name, args) -> bool
 
     def register_tool(self, name: str, description: str, parameters: dict,
                       handler: Callable):
@@ -673,6 +679,61 @@ class Brain:
                         print(f"\n=== DONE in {step} steps ({result.duration:.1f}s) ===")
                         print(f"Summary: {result.summary}")
                     return result
+
+                # Approval check for dangerous tools
+                if self.approval_mode and tool_name in self.DANGEROUS_TOOLS:
+                    if self.approval_callback:
+                        approved = self.approval_callback(step, tool_name, tool_args)
+                        if not approved:
+                            tool_result = f"[Skipped: user rejected {tool_name}]"
+                            if self.verbose:
+                                print(f"[Rejected]: {tool_name}")
+                            history.append({
+                                "step": step,
+                                "tool": tool_name,
+                                "args": tool_args,
+                                "result": tool_result,
+                            })
+                            if self.llm_config.provider in ("openai", "ollama", "custom"):
+                                messages.append({
+                                    "role": "tool",
+                                    "tool_call_id": tc["id"],
+                                    "content": tool_result,
+                                })
+                            else:
+                                messages.append({
+                                    "role": "tool",
+                                    "tool_call_id": tc.get("id", ""),
+                                    "content": tool_result,
+                                })
+                            continue
+                    elif self.verbose:
+                        # CLI approval (interactive)
+                        args_str = json.dumps(tool_args, ensure_ascii=False)[:200]
+                        answer = input(
+                            f"⚠️  Approve {tool_name}({args_str})? [y/N]: "
+                        ).strip().lower()
+                        if answer not in ("y", "yes", "ㅇ", "ㅇㅇ"):
+                            tool_result = f"[Skipped: user rejected {tool_name}]"
+                            history.append({
+                                "step": step,
+                                "tool": tool_name,
+                                "args": tool_args,
+                                "result": tool_result,
+                            })
+                            if self.llm_config.provider in ("openai", "ollama", "custom"):
+                                messages.append({
+                                    "role": "tool",
+                                    "tool_call_id": tc["id"],
+                                    "content": tool_result,
+                                })
+                            else:
+                                messages.append({
+                                    "role": "tool",
+                                    "tool_call_id": tc.get("id", ""),
+                                    "content": tool_result,
+                                })
+                            continue
 
                 # Execute tool
                 tool_result = self.executor.execute(tool_name, tool_args)

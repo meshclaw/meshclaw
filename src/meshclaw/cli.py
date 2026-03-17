@@ -11,6 +11,10 @@ Usage:
     meshclaw run scenario.json              # Run scenario from file
     meshclaw brain "check all servers"      # AI agent - give it a goal
     meshclaw chat                           # Interactive AI agent chat
+    meshclaw telegram --token BOT_TOKEN     # Telegram bot
+    meshclaw slack --token TOKEN -c CHANNEL # Slack bot
+    meshclaw discord --token TOKEN          # Discord bot
+    meshclaw webhook --port 8199            # Webhook server
 """
 
 import sys
@@ -278,6 +282,113 @@ def cmd_chat(args):
         print()
 
 
+def _make_brain(args):
+    """Create Brain instance for messenger commands."""
+    from meshclaw.brain import Brain, LLMConfig
+    llm_config = LLMConfig.from_env()
+    if hasattr(args, 'model') and args.model:
+        llm_config.model = args.model
+
+    orch = Orchestrator(mode=args.mode)
+    try:
+        orch.discover()
+    except Exception:
+        pass
+
+    return Brain(
+        llm_config=llm_config,
+        orchestrator=orch,
+        approval_mode=not getattr(args, 'no_approval', False),
+        verbose=getattr(args, 'verbose', False),
+    )
+
+
+def cmd_telegram(args):
+    """Run Telegram bot."""
+    from meshclaw.messenger import TelegramAdapter
+    token = args.token or os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    if not token:
+        print("Error: --token or TELEGRAM_BOT_TOKEN required", file=sys.stderr)
+        return 1
+
+    brain = _make_brain(args)
+    allowed = args.users.split(",") if args.users else None
+    bot = TelegramAdapter(
+        token=token,
+        brain=brain,
+        allowed_users=allowed,
+        approval_mode=not args.no_approval,
+    )
+    bot.run()
+
+
+def cmd_slack(args):
+    """Run Slack bot."""
+    from meshclaw.messenger import SlackAdapter
+    token = args.token or os.environ.get("SLACK_BOT_TOKEN", "")
+    if not token:
+        print("Error: --token or SLACK_BOT_TOKEN required", file=sys.stderr)
+        return 1
+
+    brain = _make_brain(args)
+    bot = SlackAdapter(
+        token=token,
+        channel=args.channel,
+        brain=brain,
+        approval_mode=not args.no_approval,
+    )
+    bot.run()
+
+
+def cmd_discord(args):
+    """Run Discord bot."""
+    from meshclaw.messenger import DiscordAdapter
+    token = args.token or os.environ.get("DISCORD_BOT_TOKEN", "")
+    if not token:
+        print("Error: --token or DISCORD_BOT_TOKEN required", file=sys.stderr)
+        return 1
+
+    brain = _make_brain(args)
+    bot = DiscordAdapter(
+        token=token,
+        brain=brain,
+        approval_mode=not args.no_approval,
+    )
+    bot.run()
+
+
+def cmd_webhook(args):
+    """Run webhook server."""
+    from meshclaw.messenger import WebhookAdapter
+    brain = _make_brain(args)
+    server = WebhookAdapter(
+        host=args.host,
+        port=args.port,
+        brain=brain,
+        approval_mode=not args.no_approval,
+    )
+    server.run()
+
+
+def cmd_whatsapp(args):
+    """Run WhatsApp bot (via webhook — requires Twilio or WhatsApp Business API)."""
+    from meshclaw.messenger import WebhookAdapter
+    brain = _make_brain(args)
+
+    print("🌲 MeshClaw WhatsApp Bot")
+    print("   WhatsApp uses webhook mode.")
+    print(f"   Set your WhatsApp Business API webhook to: http://YOUR_IP:{args.port}/")
+    print("   Supports: Twilio WhatsApp, Meta WhatsApp Business API")
+
+    server = WebhookAdapter(
+        host=args.host,
+        port=args.port,
+        brain=brain,
+        approval_mode=not args.no_approval,
+    )
+    server.run()
+
+
 def cmd_version(args):
     """Show version."""
     print(f"meshclaw {__version__}")
@@ -347,6 +458,45 @@ def main():
     sub = subparsers.add_parser("chat", help="Interactive AI agent chat")
     sub.add_argument("--model", default="", help="LLM model override")
     sub.set_defaults(func=cmd_chat)
+
+    # telegram
+    sub = subparsers.add_parser("telegram", help="Run Telegram bot")
+    sub.add_argument("--token", "-t", default="", help="Bot token (or TELEGRAM_BOT_TOKEN env)")
+    sub.add_argument("--model", default="", help="LLM model override")
+    sub.add_argument("--users", default="", help="Allowed user IDs (comma-separated)")
+    sub.add_argument("--no-approval", action="store_true", help="Skip approval for actions")
+    sub.set_defaults(func=cmd_telegram)
+
+    # slack
+    sub = subparsers.add_parser("slack", help="Run Slack bot")
+    sub.add_argument("--token", "-t", default="", help="Bot token (or SLACK_BOT_TOKEN env)")
+    sub.add_argument("--channel", "-c", default="", help="Channel to monitor")
+    sub.add_argument("--model", default="", help="LLM model override")
+    sub.add_argument("--no-approval", action="store_true", help="Skip approval for actions")
+    sub.set_defaults(func=cmd_slack)
+
+    # discord
+    sub = subparsers.add_parser("discord", help="Run Discord bot")
+    sub.add_argument("--token", "-t", default="", help="Bot token (or DISCORD_BOT_TOKEN env)")
+    sub.add_argument("--model", default="", help="LLM model override")
+    sub.add_argument("--no-approval", action="store_true", help="Skip approval for actions")
+    sub.set_defaults(func=cmd_discord)
+
+    # webhook
+    sub = subparsers.add_parser("webhook", help="Run generic webhook server")
+    sub.add_argument("--host", default="0.0.0.0", help="Bind host")
+    sub.add_argument("--port", "-p", type=int, default=8199, help="Port (default: 8199)")
+    sub.add_argument("--model", default="", help="LLM model override")
+    sub.add_argument("--no-approval", action="store_true", help="Skip approval for actions")
+    sub.set_defaults(func=cmd_webhook)
+
+    # whatsapp
+    sub = subparsers.add_parser("whatsapp", help="Run WhatsApp bot (webhook mode)")
+    sub.add_argument("--host", default="0.0.0.0", help="Bind host")
+    sub.add_argument("--port", "-p", type=int, default=8199, help="Port (default: 8199)")
+    sub.add_argument("--model", default="", help="LLM model override")
+    sub.add_argument("--no-approval", action="store_true", help="Skip approval for actions")
+    sub.set_defaults(func=cmd_whatsapp)
 
     # version
     sub = subparsers.add_parser("version", help="Show version")
