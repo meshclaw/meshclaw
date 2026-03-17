@@ -9,6 +9,8 @@ Usage:
     meshclaw pipeline d1:"build" d2:"test" v1:"deploy"  # Sequential
     meshclaw agents                         # List agents
     meshclaw run scenario.json              # Run scenario from file
+    meshclaw brain "check all servers"      # AI agent - give it a goal
+    meshclaw chat                           # Interactive AI agent chat
 """
 
 import sys
@@ -214,6 +216,68 @@ def cmd_run(args):
         return 0 if result.success else 1
 
 
+def cmd_brain(args):
+    """Run AI brain with a goal."""
+    from meshclaw.brain import Brain, LLMConfig
+
+    llm_config = LLMConfig.from_env()
+    if args.model:
+        llm_config.model = args.model
+
+    orch = Orchestrator(mode=args.mode)
+    orch.discover()
+
+    brain = Brain(
+        llm_config=llm_config,
+        orchestrator=orch,
+        max_steps=args.max_steps,
+        verbose=args.verbose,
+    )
+    result = brain.run(args.goal)
+    return 0 if result.success else 1
+
+
+def cmd_chat(args):
+    """Interactive AI agent chat."""
+    from meshclaw.brain import Brain, LLMConfig
+
+    llm_config = LLMConfig.from_env()
+    if args.model:
+        llm_config.model = args.model
+
+    orch = Orchestrator(mode=args.mode)
+    try:
+        orch.discover()
+    except Exception:
+        pass
+
+    brain = Brain(
+        llm_config=llm_config,
+        orchestrator=orch,
+        verbose=args.verbose,
+    )
+
+    print(f"MeshClaw Brain v{__version__} — interactive mode")
+    print(f"LLM: {llm_config.provider}/{llm_config.model}")
+    if orch.server_names:
+        print(f"Mesh: {', '.join(orch.server_names)}")
+    print("Type your goal, or 'quit' to exit.\n")
+
+    while True:
+        try:
+            goal = input("You: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\nBye.")
+            break
+
+        if not goal or goal.lower() in ("quit", "exit", "q"):
+            print("Bye.")
+            break
+
+        brain.run(goal)
+        print()
+
+
 def cmd_version(args):
     """Show version."""
     print(f"meshclaw {__version__}")
@@ -271,6 +335,18 @@ def main():
     sub = subparsers.add_parser("run", help="Run scenario from JSON file")
     sub.add_argument("file", help="Scenario JSON file")
     sub.set_defaults(func=cmd_run)
+
+    # brain
+    sub = subparsers.add_parser("brain", help="AI agent - give it a goal in natural language")
+    sub.add_argument("goal", help="Goal for the AI agent")
+    sub.add_argument("--model", default="", help="LLM model override")
+    sub.add_argument("--max-steps", type=int, default=20, help="Max reasoning steps")
+    sub.set_defaults(func=cmd_brain)
+
+    # chat
+    sub = subparsers.add_parser("chat", help="Interactive AI agent chat")
+    sub.add_argument("--model", default="", help="LLM model override")
+    sub.set_defaults(func=cmd_chat)
 
     # version
     sub = subparsers.add_parser("version", help="Show version")

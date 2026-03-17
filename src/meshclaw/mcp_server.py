@@ -23,7 +23,6 @@ import json
 import time
 import threading
 
-
 from meshclaw.agent import Agent
 from meshclaw.task import Task, TaskResult
 from meshclaw.orchestrator import Orchestrator
