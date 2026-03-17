@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "meshclaw"
-version = "0.1.0"
+version = "0.2.0"
 description = "Distributed AI agent orchestration across mesh networks"
 readme = "README.md"
 license = {text = "MIT"}
@@ -28,6 +28,7 @@ meshpop = ["meshpop", "vssh", "meshpop-wire"]
 
 [project.scripts]
 meshclaw = "meshclaw.cli:main"
+meshclaw-mcp = "meshclaw.mcp_server:main"
 
 [project.urls]
 Homepage = "https://github.com/meshpop/meshclaw"
