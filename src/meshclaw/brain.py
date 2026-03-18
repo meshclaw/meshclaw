@@ -32,8 +32,8 @@ from dataclasses import dataclass, field
 @dataclass
 class LLMConfig:
     """LLM backend configuration."""
-    provider: str = "openai"          # openai, anthropic, ollama, custom
-    model: str = "gpt-4o"            # model name
+    provider: str = "ollama"          # ollama (default), openai, anthropic, custom
+    model: str = "qwen2.5:14b"       # model name
     api_key: str = ""                 # API key (or env var name)
     base_url: str = ""                # custom endpoint (for ollama, vllm, etc.)
     temperature: float = 0.2
@@ -41,33 +41,53 @@ class LLMConfig:
 
     @classmethod
     def from_env(cls) -> "LLMConfig":
-        """Auto-detect LLM config from environment."""
-        if os.environ.get("ANTHROPIC_API_KEY"):
-            return cls(
-                provider="anthropic",
-                model=os.environ.get("MESHCLAW_MODEL", "claude-sonnet-4-20250514"),
-                api_key=os.environ["ANTHROPIC_API_KEY"],
-            )
+        """Auto-detect LLM config from environment.
+
+        Priority: MESHCLAW_ENGINE env > local Ollama > Anthropic > OpenAI
+
+        Env vars:
+          MESHCLAW_ENGINE  = ollama|anthropic|openai  (explicit override)
+          MESHCLAW_MODEL   = model name override
+          OLLAMA_BASE_URL  = http://host:11434 (remote ollama)
+          ANTHROPIC_API_KEY, OPENAI_API_KEY
+        """
+        explicit = os.environ.get("MESHCLAW_ENGINE", "").lower()
+        model_override = os.environ.get("MESHCLAW_MODEL", "")
+        ollama_url = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
+
+        if explicit == "anthropic" or (not explicit and os.environ.get("MESHCLAW_ENGINE") == "anthropic"):
+            api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+            return cls(provider="anthropic",
+                       model=model_override or "claude-sonnet-4-20250514",
+                       api_key=api_key)
+        elif explicit == "openai":
+            api_key = os.environ.get("OPENAI_API_KEY", "")
+            return cls(provider="openai",
+                       model=model_override or "gpt-4o-mini",
+                       api_key=api_key)
+        elif _ollama_available(base_url=ollama_url):
+            # Default: local Ollama (free, no API key)
+            return cls(provider="ollama",
+                       model=model_override or os.environ.get("OLLAMA_MODEL", "qwen2.5:14b"),
+                       base_url=ollama_url)
+        elif os.environ.get("ANTHROPIC_API_KEY"):
+            return cls(provider="anthropic",
+                       model=model_override or "claude-sonnet-4-20250514",
+                       api_key=os.environ["ANTHROPIC_API_KEY"])
         elif os.environ.get("OPENAI_API_KEY"):
-            return cls(
-                provider="openai",
-                model=os.environ.get("MESHCLAW_MODEL", "gpt-4o"),
-                api_key=os.environ["OPENAI_API_KEY"],
-            )
-        elif _ollama_available():
-            return cls(
-                provider="ollama",
-                model=os.environ.get("MESHCLAW_MODEL", "llama3"),
-                base_url="http://localhost:11434",
-            )
+            return cls(provider="openai",
+                       model=model_override or "gpt-4o-mini",
+                       api_key=os.environ["OPENAI_API_KEY"])
         else:
             raise RuntimeError(
-                "No LLM backend found. Set OPENAI_API_KEY, ANTHROPIC_API_KEY, "
-                "or run ollama locally."
+                "No LLM backend found.\n"
+                "  Option 1 (free): Install Ollama -> https://ollama.com\n"
+                "  Option 2: Set ANTHROPIC_API_KEY or OPENAI_API_KEY\n"
+                "  Option 3: Set MESHCLAW_ENGINE=ollama with OLLAMA_BASE_URL"
             )
 
 
-def _ollama_available() -> bool:
+def _ollama_available(base_url: str = "http://localhost:11434") -> bool:
     """Check if ollama is running locally."""
     try:
         import urllib.request
