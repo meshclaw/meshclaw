@@ -44,8 +44,8 @@ class Orchestrator:
 
     Usage (manual agents):
         orch = Orchestrator()
-        orch.add_agent("builder", server="d1")
-        orch.add_agent("tester", server="d2")
+        orch.add_agent("builder", server="server1")
+        orch.add_agent("tester", server="server2")
         orch.add_agent("deployer", server="v1")
         result = orch.run(scenario)
 
@@ -328,8 +328,8 @@ class Orchestrator:
 
         Usage:
             orch.pipeline("build-deploy", [
-                {"server": "d1", "command": "make build"},
-                {"server": "d2", "command": "make test"},
+                {"server": "server1", "command": "make build"},
+                {"server": "server2", "command": "make test"},
                 {"server": "v1", "command": "./deploy.sh"},
             ])
         """

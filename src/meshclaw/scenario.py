@@ -145,15 +145,15 @@ class ParallelScenario(Scenario):
 
     Usage:
         scenario = ParallelScenario("health-check", [
-            Task("check-d1", command="uptime", server="d1"),
-            Task("check-d2", command="uptime", server="d2"),
-            Task("check-g1", command="uptime", server="g1"),
+            Task("check-server1", command="uptime", server="server1"),
+            Task("check-server2", command="uptime", server="server2"),
+            Task("check-server3", command="uptime", server="server3"),
         ])
         result = orchestrator.run(scenario)
 
     Or with a single command on multiple servers:
         scenario = ParallelScenario.broadcast("disk-check", "df -h",
-                                               servers=["d1", "d2", "g1", "v1"])
+                                               servers=["server1", "server2", "server3", "server4"])
     """
 
     def __init__(self, name: str, tasks: Optional[List[Task]] = None, *,
@@ -237,9 +237,9 @@ class SequentialScenario(Scenario):
 
     Usage:
         scenario = SequentialScenario("build-test-deploy", [
-            Task("build", command="make build", server="d1"),
-            Task("test", command="make test", server="d2"),
-            Task("deploy", command="./deploy.sh", server="v1"),
+            Task("build", command="make build", server="server1"),
+            Task("test", command="make test", server="server2"),
+            Task("deploy", command="./deploy.sh", server="server5"),
         ])
         result = orchestrator.run(scenario)
 
@@ -323,14 +323,14 @@ class CollaborativeScenario(Scenario):
 
     Usage:
         scenario = CollaborativeScenario("data-pipeline")
-        scenario.add_agent_task("scraper", server="d1",
+        scenario.add_agent_task("scraper", server="server1",
             command="curl -s https://api.example.com/data > /tmp/data.json",
             publishes=["data_ready"])
-        scenario.add_agent_task("processor", server="g1",
+        scenario.add_agent_task("processor", server="server3",
             command="python3 process.py",
             waits_for=["data_ready"],
             publishes=["processed"])
-        scenario.add_agent_task("server", server="v1",
+        scenario.add_agent_task("server", server="server5",
             command="python3 serve.py",
             waits_for=["processed"])
         result = orchestrator.run(scenario)
@@ -475,7 +475,7 @@ class MapReduceScenario(Scenario):
         scenario = MapReduceScenario(
             "log-analysis",
             map_command="grep ERROR /var/log/syslog | wc -l",
-            map_servers=["d1", "d2", "g1", "v1"],
+            map_servers=["server1", "server2", "server3", "server4"],
             reduce_command="python3 -c 'import sys; print(sum(int(l) for l in sys.stdin))'",
             reduce_server="m1"
         )

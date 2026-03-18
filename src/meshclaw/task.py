@@ -85,14 +85,14 @@ class Task:
 
     Usage:
         # Simple shell task
-        task = Task("check-disk", command="df -h", server="d1")
+        task = Task("check-disk", command="df -h", server="server1")
 
         # Python task
-        task = Task("analyze", python="print(2+2)", server="g1")
+        task = Task("analyze", python="print(2+2)", server="server2")
 
         # Task with dependencies
-        build = Task("build", command="make", server="d1")
-        test = Task("test", command="make test", server="d2", depends_on=[build])
+        build = Task("build", command="make", server="server1")
+        test = Task("test", command="make test", server="server3", depends_on=[build])
 
         # Task with conditions
         deploy = Task("deploy", command="./deploy.sh", server="v1",

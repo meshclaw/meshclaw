@@ -62,13 +62,13 @@ class Agent:
     """A distributed AI agent bound to a mesh network node.
 
     Usage:
-        agent = Agent("builder", server="d1")
+        agent = Agent("builder", server="server1")
         agent.start()
         result = agent.execute("uname -a")
         agent.stop()
 
     With MeshPOP integration:
-        agent = Agent("builder", server="d1", use_meshpop=True)
+        agent = Agent("builder", server="server1", use_meshpop=True)
         # Automatically uses vssh for remote execution
         # Automatically registers in meshdb for discovery
         # Automatically uses wire for secure transport
