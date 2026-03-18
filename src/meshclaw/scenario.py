@@ -477,7 +477,7 @@ class MapReduceScenario(Scenario):
             map_command="grep ERROR /var/log/syslog | wc -l",
             map_servers=["server1", "server2", "server3", "server4"],
             reduce_command="python3 -c 'import sys; print(sum(int(l) for l in sys.stdin))'",
-            reduce_server="m1"
+            reduce_server="server-main"
         )
     """
 

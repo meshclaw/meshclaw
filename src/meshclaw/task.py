@@ -99,7 +99,7 @@ class Task:
                       condition=lambda results: all(r.success for r in results))
 
         # Task targeting multiple servers
-        task = Task("health-check", command="uptime", servers=["d1", "d2", "g1"])
+        task = Task("health-check", command="uptime", servers=["server1", "server2", "server3"])
     """
 
     name: str
