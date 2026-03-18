@@ -515,8 +515,9 @@ class MapReduceScenario(Scenario):
         self._progress(f"REDUCE phase: on {self.reduce_server}")
         reduce_agent = orchestrator.get_agent_for(self.reduce_server)
         if reduce_agent:
-            # Pipe map outputs into reduce command
-            reduce_cmd = f"echo '{map_outputs}' | {self.reduce_command}"
+            # Substitute {PREV_OUTPUT} placeholder, then pipe map outputs into reduce command
+            reduce_command = self.reduce_command.replace("{PREV_OUTPUT}", map_outputs.strip())
+            reduce_cmd = f"echo '{map_outputs}' | {reduce_command}"
             result_dict = reduce_agent.execute(reduce_cmd)
             reduce_result = TaskResult(
                 task_id="reduce", task_name=f"{self.name}-reduce",

@@ -110,6 +110,33 @@ class Agent:
     def is_alive(self) -> bool:
         return self._running and self.state not in (AgentState.ERROR, AgentState.STOPPED)
 
+    @property
+    def is_healthy(self) -> bool:
+        """True if agent can accept new tasks (IDLE or WAITING)."""
+        return self._running and self.state not in (AgentState.ERROR, AgentState.STOPPED)
+
+    def recover(self) -> bool:
+        """Attempt to recover from ERROR state.
+
+        Pings the agent's server; if reachable resets state to IDLE.
+        Returns True if the agent is now healthy.
+        """
+        if self.state == AgentState.STOPPED:
+            return False
+        if self.state != AgentState.ERROR:
+            return True
+        if self.is_local:
+            reachable = True
+        else:
+            result = self._remote_exec("echo meshclaw_ping", timeout=10)
+            reachable = result.get("exit_code") == 0
+        if reachable:
+            with self._lock:
+                self.state = AgentState.IDLE
+            self._emit("recovered", {"agent": self.name, "server": self.server})
+            return True
+        return False
+
     def _detect_server(self) -> str:
         """Auto-detect current server name."""
         try:
@@ -208,12 +235,12 @@ class Agent:
 
         except subprocess.TimeoutExpired:
             with self._lock:
-                self.state = AgentState.ERROR
+                self.state = AgentState.IDLE  # Task timed out, agent itself is fine
             return {"success": False, "stdout": "", "stderr": f"Timeout after {timeout}s",
                     "exit_code": -1, "duration": timeout, "server": self.server, "agent": self.name}
         except Exception as e:
             with self._lock:
-                self.state = AgentState.ERROR
+                self.state = AgentState.IDLE  # Task raised an exception, agent itself is fine
             return {"success": False, "stdout": "", "stderr": str(e),
                     "exit_code": -1, "duration": time.time() - start_time,
                     "server": self.server, "agent": self.name}
@@ -278,11 +305,18 @@ class Agent:
             old_server = self.server
             self.state = AgentState.MIGRATING
 
-        # Test connectivity to target
-        test = self._exec_on(target_server, "echo meshclaw_ping")
-        if not test.get("success"):
+        # Test connectivity to target (retry up to 3 times with backoff)
+        test = None
+        for attempt in range(3):
+            test = self._exec_on(target_server, "echo meshclaw_ping")
+            if test.get("success"):
+                break
+            if attempt < 2:
+                time.sleep(2 ** attempt)  # 1 s, 2 s
+        if not test or not test.get("success"):
             with self._lock:
-                self.state = AgentState.ERROR
+                self.state = AgentState.IDLE  # Migration failed; agent was healthy before
+            self._emit("migrate_failed", {"target": target_server, "agent": self.name})
             return False
 
         # Prepare working directory on target
