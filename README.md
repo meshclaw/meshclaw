@@ -64,16 +64,16 @@ with Orchestrator() as orch:
 
     # Parallel: different tasks on different servers
     result = orch.parallel("build-and-test", [
-        Task("build", command="make build", server="d1"),
-        Task("test", command="make test", server="d2"),
-        Task("lint", command="make lint", server="g1"),
+        Task("build", command="make build", server="worker1"),
+        Task("test", command="make test", server="worker2"),
+        Task("lint", command="make lint", server="gpu1"),
     ])
 
     # Sequential pipeline: output chains
     result = orch.pipeline("deploy", [
-        {"server": "d1", "command": "make build"},
-        {"server": "d2", "command": "make test"},
-        {"server": "v1", "command": "./deploy.sh"},
+        {"server": "worker1", "command": "make build"},
+        {"server": "worker2", "command": "make test"},
+        {"server": "relay1", "command": "./deploy.sh"},
     ])
 
     # Broadcast: same command on all servers
@@ -90,14 +90,14 @@ with Orchestrator() as orch:
     orch.discover()
 
     collab = CollaborativeScenario("data-pipeline")
-    collab.add_agent_task("scraper", server="d1",
+    collab.add_agent_task("scraper", server="worker1",
         command="curl -s https://api.example.com/data > /tmp/data.json",
         publishes=["data_ready"])
-    collab.add_agent_task("processor", server="g1",
+    collab.add_agent_task("processor", server="gpu1",
         command="python3 /opt/process.py /tmp/data.json",
         waits_for=["data_ready"],
         publishes=["processed"])
-    collab.add_agent_task("server", server="v1",
+    collab.add_agent_task("server", server="relay1",
         command="cp /tmp/output.json /var/www/api/",
         waits_for=["processed"])
 
@@ -109,7 +109,7 @@ with Orchestrator() as orch:
 ```python
 from meshclaw import Agent
 
-agent = Agent("worker", server="d1")
+agent = Agent("worker", server="worker1")
 agent.start()
 agent.execute("heavy-computation.sh")
 
@@ -130,9 +130,9 @@ with Orchestrator() as orch:
     scenario = MapReduceScenario(
         "error-count",
         map_command="grep -c ERROR /var/log/syslog",
-        map_servers=["d1", "d2", "g1", "v1"],
+        map_servers=["worker1", "worker2", "gpu1", "relay1"],
         reduce_command="python3 -c 'import sys; print(sum(int(l) for l in sys.stdin))'",
-        reduce_server="m1"
+        reduce_server="local"
     )
     result = orch.run(scenario)
     print(f"Total errors: {result.results[-1].output}")
