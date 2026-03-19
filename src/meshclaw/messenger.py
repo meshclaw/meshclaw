@@ -185,14 +185,14 @@ class BaseAdapter:
             return
 
         text = msg.text.strip().lower()
-        if text in ("yes", "y", "ㅇ", "ㅇㅇ", "응", "네", "ok", "확인", "승인", "✅"):
+        if text in ("yes", "y", "ok", "✅"):
             pending["approved"] = True
             self.send(msg.chat_id, "✅ Approved. Continuing...")
-        elif text in ("no", "n", "ㄴ", "아니", "취소", "거부", "❌"):
+        elif text in ("no", "n", "❌"):
             pending["approved"] = False
             self.send(msg.chat_id, "❌ Rejected. Skipping action.")
         else:
-            self.send(msg.chat_id, "↩️ Reply yes(ㅇㅇ) or no(ㄴ)")
+            self.send(msg.chat_id, "↩️ Reply yes or no")
             return
 
         pending["event"].set()
@@ -203,7 +203,7 @@ class BaseAdapter:
                   "Send any goal in natural language:\n"
                   "  \"Check disk space on all servers\"\n"
                   "  \"Deploy the app to v1\"\n"
-                  "  \"g1 서버 상태 확인해줘\"\n\n"
+                  "  \"check g1 server status\"\n\n"
                   "Commands:\n"
                   "  /status — Show mesh status\n"
                   "  /stop — Cancel current task\n"
