@@ -759,7 +759,7 @@ class Brain:
                         answer = input(
                             f"⚠️  Approve {tool_name}({args_str})? [y/N]: "
                         ).strip().lower()
-                        if answer not in ("y", "yes", "ㅇ", "ㅇㅇ"):
+                        if answer not in ("y", "yes"):
                             tool_result = f"[Skipped: user rejected {tool_name}]"
                             history.append({
                                 "step": step,
