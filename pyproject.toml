@@ -37,3 +37,6 @@ Issues = "https://github.com/meshpop/meshclaw/issues"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[project.entry-points."meshpop.mcp"]
+meshclaw = "meshclaw.mcp_server"
