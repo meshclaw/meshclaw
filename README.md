@@ -146,8 +146,7 @@ MeshClaw includes an MCP server for AI assistant integration:
 {
   "mcpServers": {
     "meshclaw": {
-      "command": "python3",
-      "args": ["/path/to/meshclaw-mcp-server.py"]
+      "command": "meshclaw-mcp"
     }
   }
 }
