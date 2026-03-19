@@ -446,5 +446,10 @@ def main():
             send_message({"jsonrpc": "2.0", "id": msg_id, "result": {}})
 
 
+
+def handle_tool(name: str, arguments: dict) -> str:
+    """Unified MCP compatibility wrapper."""
+    return handle_tool_call(name, arguments)
+
 if __name__ == "__main__":
     main()
