@@ -3,10 +3,10 @@
 Usage:
     meshclaw discover                       # Find mesh nodes
     meshclaw status                         # Show orchestrator status
-    meshclaw exec "uptime" -s d1            # Run command on server
+    meshclaw exec "uptime" -s worker1            # Run command on server
     meshclaw broadcast "uptime"             # Run on all servers
-    meshclaw parallel -s d1 "make" -s d2 "test"  # Parallel tasks
-    meshclaw pipeline d1:"build" d2:"test" v1:"deploy"  # Sequential
+    meshclaw parallel -s worker1 "make" -s worker2 "test"  # Parallel tasks
+    meshclaw pipeline worker1:"build" worker2:"test" relay1:"deploy"  # Sequential
     meshclaw agents                         # List agents
     meshclaw run scenario.json              # Run scenario from file
     meshclaw brain "check all servers"      # AI agent - give it a goal

@@ -3,13 +3,13 @@
 Three core scenarios that OpenClaw can't do:
 
 1. ParallelScenario: Same or different tasks on multiple servers simultaneously
-   - "Build on d1 AND test on d2 AND deploy on v1, all at once"
+   - "Build on worker1 AND test on worker2 AND deploy on relay1, all at once"
 
 2. SequentialScenario: Pipeline across servers, output flows to next
-   - "Build on d1, THEN test result on d2, THEN deploy to v1"
+   - "Build on worker1, THEN test result on worker2, THEN deploy to relay1"
 
 3. CollaborativeScenario: Multiple agents share state and coordinate
-   - "Agent on d1 scrapes data, agent on g1 processes it, agent on v1 serves it"
+   - "Agent on worker1 scrapes data, agent on node1 processes it, agent on relay1 serves it"
    - Agents can read/write shared state and react to each other's progress
 
 Plus advanced patterns:

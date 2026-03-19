@@ -2,7 +2,7 @@
 
 Distributed AI agent orchestration across mesh networks.
 
-While existing agent frameworks (OpenClaw, etc.) run on a single machine, MeshClaw distributes AI agents across your entire server infrastructure. Build on d1, test on d2, deploy on v1 — all orchestrated by AI.
+While existing agent frameworks (OpenClaw, etc.) run on a single machine, MeshClaw distributes AI agents across your entire server infrastructure. Build on worker1, test on worker2, deploy on relay1 — all orchestrated by AI.
 
 **Works on a single PC too** — MeshClaw treats local containers (Docker, LXC, rtlinux) as mesh nodes, giving you distributed agent power on one machine.
 
@@ -40,16 +40,16 @@ pip install meshclaw[meshpop]
 meshclaw discover
 
 # Execute on a specific server
-meshclaw exec "uptime" -s d1
+meshclaw exec "uptime" -s worker1
 
 # Broadcast to all servers
 meshclaw broadcast "df -h"
 
 # Parallel tasks on different servers
-meshclaw parallel d1:"make build" d2:"make test" v1:"./deploy.sh"
+meshclaw parallel worker1:"make build" worker2:"make test" relay1:"./deploy.sh"
 
 # Sequential pipeline
-meshclaw pipeline d1:"make build" d2:"make test" v1:"./deploy.sh"
+meshclaw pipeline worker1:"make build" worker2:"make test" relay1:"./deploy.sh"
 ```
 
 ### Python API
@@ -113,9 +113,9 @@ agent = Agent("worker", server="worker1")
 agent.start()
 agent.execute("heavy-computation.sh")
 
-# Server d1 is overloaded? Move to d2
-agent.migrate("d2")
-agent.execute("continue-work.sh")  # Now runs on d2
+# Server worker1 is overloaded? Move to worker2
+agent.migrate("worker2")
+agent.execute("continue-work.sh")  # Now runs on worker2
 ```
 
 ### Map-Reduce
@@ -187,12 +187,12 @@ result = orch.parallel("local-work", [
 ```
                     Orchestrator
                     /    |     \
-              Agent-d1  Agent-d2  Agent-v1
+              Agent-worker1  Agent-worker2  Agent-relay1
               (build)   (test)    (deploy)
                 |         |         |
             [vssh/ssh] [vssh/ssh] [vssh/ssh]
                 |         |         |
-              Server-d1 Server-d2 Server-v1
+              Server-worker1 Server-worker2 Server-relay1
 ```
 
 Built on MeshPOP: mpop (management), vssh (execution), wire (networking), meshdb (state), vault (secrets).
