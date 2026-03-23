@@ -394,6 +394,47 @@ def cmd_version(args):
     print(f"meshclaw {__version__}")
 
 
+# ─── History ────────────────────────────────────────────────────────
+import time as _cht; from pathlib import Path as _cHP
+_MESHCLAW_HIST = _cHP.home() / '.mpop' / 'meshclaw_history.log'
+
+def _claw_log_hist(cmd, detail='', status='OK'):
+    try:
+        _MESHCLAW_HIST.parent.mkdir(exist_ok=True)
+        ts = _cht.strftime('%Y-%m-%d %H:%M:%S')
+        d = str(detail).replace('\n',' ').strip()[:200]
+        with open(_MESHCLAW_HIST, 'a') as _f:
+            _f.write(f'{ts}\t{cmd}\t{d}\t{status}\n')
+    except: pass
+
+def _claw_show_hist(count=20, cmd_filter=None):
+    if not _MESHCLAW_HIST.exists():
+        print('No history.'); return
+    entries = []
+    with open(_MESHCLAW_HIST) as _f:
+        for line in _f:
+            p = line.strip().split('\t')
+            if len(p) >= 2:
+                if cmd_filter and cmd_filter != p[1]: continue
+                entries.append(p)
+    if not entries:
+        print('No history.'); return
+    print(f"{'TIME':<20} {'CMD':<12} {'DETAIL':<60} STATUS")
+    print('─' * 98)
+    for p in entries[-count:]:
+        ts, cmd = p[0], p[1]
+        detail = p[2][:58] if len(p) > 2 else ''
+        status = p[3] if len(p) > 3 else 'OK'
+        c = '\033[32m' if status == 'OK' else '\033[31m'
+        print(f'{ts:<20} {cmd:<12} {detail:<60} {c}{status}\033[0m')
+
+def cmd_history(args):
+    count = getattr(args, 'count', 20) or 20
+    filt  = getattr(args, 'filter', None)
+    _claw_show_hist(count, filt)
+    return 0
+# ────────────────────────────────────────────────────────────────────
+
 def main():
     parser = argparse.ArgumentParser(
         prog="meshclaw",
@@ -502,12 +543,20 @@ def main():
     sub = subparsers.add_parser("version", help="Show version")
     sub.set_defaults(func=cmd_version)
 
+    # history
+    sub = subparsers.add_parser("history", help="Show command history")
+    sub.add_argument("count", nargs="?", type=int, default=20)
+    sub.add_argument("filter", nargs="?", default=None)
+    sub.set_defaults(func=cmd_history)
+
     args = parser.parse_args()
     if not args.command:
         parser.print_help()
         return 0
 
     try:
+        import sys as _sys
+        _claw_log_hist(args.command, " ".join(_sys.argv[1:]))
         exit_code = args.func(args) or 0
         sys.exit(exit_code)
     except KeyboardInterrupt:
