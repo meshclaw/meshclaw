@@ -17,18 +17,11 @@ pip install meshclaw
 meshclaw turns any machine into an AI worker. One YAML file, one command to start.
 
 ```bash
-# 1. Pick a template
-meshclaw templates
-
-# 2. Init your worker
-meshclaw init assistant
-
-# 3. Start it
-meshclaw start assistant
-
-# 4. Talk to it
-meshclaw chat assistant
-meshclaw ask assistant "check disk usage"
+meshclaw templates               # browse built-in templates
+meshclaw init assistant          # scaffold config
+meshclaw start assistant         # run in background
+meshclaw chat assistant          # interactive chat
+meshclaw ask assistant "status"  # one-shot
 ```
 
 ---
@@ -40,7 +33,7 @@ pip install meshclaw
 ollama pull qwen2.5:7b
 
 meshclaw init assistant
-# edit ~/.meshclaw/assistant/template.yaml → set model: ollama/qwen2.5:7b
+# edit ~/.meshclaw/assistant/template.yaml → model: ollama/qwen2.5:7b
 
 meshclaw start assistant
 meshclaw chat assistant
@@ -52,11 +45,9 @@ meshclaw chat assistant
 
 ```bash
 pip install meshclaw
-
 export ANTHROPIC_API_KEY=sk-ant-...
 meshclaw init assistant
 meshclaw start assistant
-meshclaw chat assistant
 ```
 
 ---
@@ -73,8 +64,7 @@ schedule: "every 1h"
 schedule_script: |
   #!/bin/bash
   echo "=== $(date) ==="
-  df -h
-  uptime
+  df -h && uptime
 
 on_message: "Help with the user's request. Use bash for real data."
 
@@ -87,10 +77,6 @@ notify:
 ---
 
 ## Built-in Templates
-
-```bash
-meshclaw templates
-```
 
 | Template | Model | Use case |
 |---|---|---|
@@ -123,8 +109,6 @@ meshclaw version                  # Show version
 
 ## Scheduled Tasks
 
-Workers can run on a schedule — with LLM or without (bash-only, no hallucination):
-
 ```yaml
 # With LLM
 schedule: "every 1h"
@@ -134,15 +118,12 @@ schedule_task: "Summarize the latest news and report key trends."
 schedule: "every 15m"
 schedule_script: |
   #!/bin/bash
-  FREE=$(df -h / | awk 'NR==2{print $5}')
-  echo "Disk: $FREE used"
+  df -h / | awk 'NR==2{print "Disk: "$5" used"}'
 ```
 
 ---
 
 ## Notifications
-
-Send results to Telegram, Slack, Discord, or any webhook after each scheduled run:
 
 ```yaml
 notify:
@@ -155,97 +136,31 @@ notify:
 
 ## Orchestration — Multiple Workers
 
-Deploy workers to remote servers and coordinate them via SSH:
-
 ```bash
 # Deploy to remote server
 meshclaw remote-up 192.168.1.100 system-monitor
 
-# Ask a remote worker
+# Ask a remote worker via SSH
 ssh root@192.168.1.100 "meshclaw ask system-monitor 'disk status'"
 ```
 
-Fan-out to multiple workers in parallel (Python):
+Fan-out to multiple workers in parallel:
 
 ```python
 import subprocess, concurrent.futures
 
-WORKERS = {
-    "g1": "192.168.1.101",
-    "g2": "192.168.1.102",
-}
+WORKERS = {"g1": "192.168.1.101", "g2": "192.168.1.102"}
 
 def ask_remote(ip, name, task):
-    r = subprocess.run(
-        ["ssh", f"root@{ip}", f"meshclaw ask {name} '{task}'"],
-        capture_output=True, text=True, timeout=120
-    )
+    r = subprocess.run(["ssh", f"root@{ip}", f"meshclaw ask {name} '{task}'"],
+                       capture_output=True, text=True, timeout=120)
     return r.stdout.strip()
 
 with concurrent.futures.ThreadPoolExecutor() as ex:
-    results = {g: ex.submit(ask_remote, ip, f"{g}-worker", "status report")
+    results = {g: ex.submit(ask_remote, ip, f"{g}-worker", "status")
                for g, ip in WORKERS.items()}
     for g, f in results.items():
         print(f"{g}: {f.result()}")
 ```
 
-Or use the built-in `orchestrator` template which does this automatically.
-
----
-
-## Python API
-
-```python
-import meshclaw
-
-# Local worker
-reply = meshclaw.ask_worker("my-worker", "what is the disk usage?")
-print(reply)
-
-# Deploy to remote server
-meshclaw.remote_up("192.168.1.100", "system-monitor",
-                   env={"OLLAMA_URL": "http://localhost:11434"})
-
-# Send notification
-meshclaw.notify("telegram", "Worker finished!", token="...", chat_id="...")
-```
-
----
-
-## MeshPOP Stack (optional)
-
-For faster transport and secret management, add the meshpop engine:
-
-```bash
-pip install meshclaw[meshpop]
-```
-
-| Component | Role |
-|---|---|
-| `wire` | WireGuard VPN mesh (faster than Tailscale) |
-| `vssh` | Authenticated file transfer |
-| `vault` | Secrets management |
-
-meshclaw works without these — Tailscale SSH is enough for most use cases.
-
----
-
-## Install from GitHub
-
-```bash
-pip install git+https://github.com/meshclaw/meshclaw.git
-```
-
----
-
-## Links
-
-- PyPI: https://pypi.org/project/meshclaw/
-- GitHub: https://github.com/meshclaw/meshclaw
-- Homepage: https://meshclaw.run
-
----
-
-## License
-
-Apache-2.0 — [meshclaw](https://github.com/meshclaw)
+Use the built-in `orchestrator` template to do this automatically on a schedule.
