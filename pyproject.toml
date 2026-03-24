@@ -4,17 +4,17 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "meshclaw"
-version = "0.4.4"
-description = "Distributed AI agent orchestration across mesh networks — with messenger support"
+version = "0.5.5"
+description = "AI workers, anywhere — run AI agents on any machine, no cloud required"
 readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.9"
 authors = [
     {name = "MeshPOP", email = "mpop@mpop.dev"}
 ]
-keywords = ["ai", "agent", "distributed", "mesh", "orchestration", "mcp"]
+keywords = ["ai", "agent", "worker", "ollama", "llm", "automation", "mesh", "orchestration"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
@@ -24,6 +24,9 @@ classifiers = [
 dependencies = []
 
 [project.optional-dependencies]
+anthropic = ["anthropic>=0.18.0"]
+openai = ["openai>=1.0.0"]
+all = ["anthropic>=0.18.0", "openai>=1.0.0"]
 meshpop = ["meshpop", "vssh", "meshpop-wire"]
 
 [project.scripts]
@@ -31,9 +34,9 @@ meshclaw = "meshclaw.cli:main"
 meshclaw-mcp = "meshclaw.mcp_server:main"
 
 [project.urls]
-Homepage = "https://github.com/meshpop/meshclaw"
-Repository = "https://github.com/meshpop/meshclaw"
-Issues = "https://github.com/meshpop/meshclaw/issues"
+Homepage = "https://meshclaw.run"
+Repository = "https://github.com/meshclaw/meshclaw"
+Issues = "https://github.com/meshclaw/meshclaw/issues"
 
 [tool.setuptools.packages.find]
 where = ["src"]

@@ -1,0 +1,27 @@
+name: email-assistant
+description: "Monitors inbox, drafts replies, flags urgent messages"
+version: "1.0.0"
+author: "MeshPOP"
+model: claude-sonnet-4-6
+system_prompt: |
+  You are an intelligent email assistant. You help users:
+  - Summarize unread emails concisely
+  - Draft professional replies
+  - Flag urgent or important messages
+  - Organize and prioritize inbox
+
+  Always be concise. For summaries, use bullet points.
+  For drafts, match the user's tone.
+tools:
+  - web_search
+packages:
+  - imapclient
+  - anthropic
+schedule: "every 30m"
+schedule_task: "Check inbox for urgent messages and summarize anything important from the last 30 minutes."
+on_message: "Handle the user's email request — summarize, draft, or search inbox as needed."
+env:
+  - ANTHROPIC_API_KEY
+  - IMAP_HOST
+  - IMAP_USER
+  - IMAP_PASS

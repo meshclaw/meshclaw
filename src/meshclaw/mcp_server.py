@@ -54,7 +54,7 @@ TOOLS = [
         "description": "Discover mesh nodes (servers in mesh network or local containers). "
                        "Returns list of available servers that agents can run on. "
                        "Auto-detects mesh mode (multi-server via mpop/wire) or "
-                       "local mode (Docker/LXC/rtlinux containers on single machine).",
+                       "local mode (Docker/LXC/meshclaw containers on single machine).",
         "inputSchema": {
             "type": "object",
             "properties": {
