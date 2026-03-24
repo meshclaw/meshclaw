@@ -11,11 +11,11 @@ system_prompt: |
   Reach them via Tailscale SSH and run:
     ssh root@<tailscale-ip> "meshclaw ask <worker-name> 'task'"
 
-  WORKER FLEET (set your IPs in ~/.meshclaw/orchestrator/template.yaml):
-    g1  ${WORKER_G1_IP:-192.168.1.101}  g1-worker
-    g2  ${WORKER_G2_IP:-192.168.1.102}  g2-worker
-    g3  ${WORKER_G3_IP:-192.168.1.103}  g3-worker
-    g4  ${WORKER_G4_IP:-192.168.1.104}  g4-worker
+  WORKER FLEET (set Tailscale IPs via env vars, e.g. export WORKER_G1_IP=100.x.x.x):
+    g1  ${WORKER_G1_IP:-100.x.x.x}  g1-worker
+    g2  ${WORKER_G2_IP:-100.x.x.x}  g2-worker
+    g3  ${WORKER_G3_IP:-100.x.x.x}  g3-worker
+    g4  ${WORKER_G4_IP:-100.x.x.x}  g4-worker
 
   Your job:
   - Fan out work to multiple workers in parallel
@@ -30,10 +30,10 @@ schedule_script: |
   # Coordinator: fan-out to g1-g4 and collect results in parallel
 
   declare -A WORKERS=(
-    ["g1"]="${WORKER_G1_IP:-192.168.1.101}:g1-worker"
-    ["g2"]="${WORKER_G2_IP:-192.168.1.102}:g2-worker"
-    ["g3"]="${WORKER_G3_IP:-192.168.1.103}:g3-worker"
-    ["g4"]="${WORKER_G4_IP:-192.168.1.104}:g4-worker"
+    ["g1"]="${WORKER_G1_IP:?Set WORKER_G1_IP to Tailscale IP of g1}:g1-worker"
+    ["g2"]="${WORKER_G2_IP:?Set WORKER_G2_IP to Tailscale IP of g2}:g2-worker"
+    ["g3"]="${WORKER_G3_IP:?Set WORKER_G3_IP to Tailscale IP of g3}:g3-worker"
+    ["g4"]="${WORKER_G4_IP:?Set WORKER_G4_IP to Tailscale IP of g4}:g4-worker"
   )
 
   TASK="시스템 상태 점검: CPU, 메모리, 디스크 사용량 요약"
@@ -83,7 +83,7 @@ notify:
   chat_id: YOUR_CHAT_ID
 
 env:
-  - WORKER_G1_IP   # Tailscale or Wire IP of g1 (e.g. 100.x.x.x or 10.99.x.x)
-  - WORKER_G2_IP
-  - WORKER_G3_IP
-  - WORKER_G4_IP
+  - WORKER_G1_IP   # Tailscale IP of g1 (run: tailscale ip -4 on g1)
+  - WORKER_G2_IP   # Tailscale IP of g2
+  - WORKER_G3_IP   # Tailscale IP of g3
+  - WORKER_G4_IP   # Tailscale IP of g4

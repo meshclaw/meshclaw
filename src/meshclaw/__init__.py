@@ -60,11 +60,15 @@ RTLINUX_DIR = os.environ.get("RTLINUX_DIR", _default_meshclaw_dir())
 BUILD_METHODS = ["buildroot", "alpine", "scratch", "nodocker"]
 DEFAULT_METHOD = "buildroot"
 
-MESHPOP_PACKAGES = ["meshpop", "vssh", "meshpop-wire", "meshpop-db", "sv-vault"]
+MESHPOP_PACKAGES = ["meshpop", "meshpop-db", "sv-vault"]
 
 
 def _resolve_node_ip(node: str) -> str:
-    """Resolve node name to wire_ip via ~/.mpop/config.json, fallback to node name."""
+    """Resolve node name to IP via ~/.mpop/config.json, fallback to node as-is.
+
+    Priority: tailscale_ip → public_ip → wire_ip → ip → node name.
+    Tailscale IPs (100.x.x.x) work for any user without extra setup.
+    """
     try:
         import json
         cfg_path = os.path.expanduser("~/.mpop/config.json")
@@ -74,50 +78,75 @@ def _resolve_node_ip(node: str) -> str:
             servers = cfg.get("servers", {})
             if node in servers:
                 srv = servers[node]
-                # Prefer wire_ip (VPN), then ip, then original node name
-                return srv.get("wire_ip") or srv.get("ip") or node
+                return (srv.get("tailscale_ip") or srv.get("public_ip")
+                        or srv.get("wire_ip") or srv.get("ip") or node)
     except Exception:
         pass
     return node
 
 
+def _ssh_exec(host: str, cmd: str, user: str = "root",
+              port: int = 22, key: str = None) -> str:
+    """Execute command on remote host via standard SSH."""
+    opts = ["-o", "StrictHostKeyChecking=no", "-o", "ConnectTimeout=10",
+            "-p", str(port)]
+    if key:
+        opts += ["-i", key]
+    r = subprocess.run(["ssh"] + opts + [f"{user}@{host}", cmd],
+                       capture_output=True, text=True, timeout=30)
+    return r.stdout.strip()
+
+
+def _ssh_put(local_path: str, host: str, remote_path: str,
+             user: str = "root", port: int = 22, key: str = None) -> bool:
+    """Upload file to remote host via standard SCP."""
+    opts = ["-o", "StrictHostKeyChecking=no", "-o", "ConnectTimeout=10",
+            "-P", str(port)]
+    if key:
+        opts += ["-i", key]
+    r = subprocess.run(["scp"] + opts + [local_path, f"{user}@{host}:{remote_path}"],
+                       capture_output=True, text=True, timeout=120)
+    return r.returncode == 0
+
+
 def _vssh_exec(node: str, cmd: str) -> str:
-    """Execute command on remote node via vssh Python module.
-    Resolves node name to VPN IP via ~/.mpop/config.json for reliable routing.
+    """Execute command on remote node. Uses standard SSH by default.
+
+    Resolves node name via ~/.mpop/config.json (tailscale_ip preferred).
+    Falls back to vssh (Wire VPN) if installed and SSH fails.
     """
     ip = _resolve_node_ip(node)
     try:
-        import vssh
-        import io
+        return _ssh_exec(ip, cmd)
+    except Exception:
+        pass
+    # Fallback: vssh (MeshPOP Wire VPN users)
+    try:
+        import vssh, io
         old = sys.stdout
         sys.stdout = buf = io.StringIO()
         vssh.ssh(ip, cmd)
         sys.stdout = old
         return buf.getvalue().strip()
-    except ImportError:
-        # Fallback to CLI
-        r = subprocess.run(
-            ["vssh", "exec", ip, cmd],
-            capture_output=True, text=True, timeout=30
-        )
-        return r.stdout.strip()
+    except Exception:
+        return ""
 
 
 def _vssh_put(local_path: str, node: str, remote_path: str) -> bool:
-    """Upload file to remote node via vssh.
-    Resolves node name to VPN IP via ~/.mpop/config.json.
+    """Upload file to remote node. Uses standard SCP by default.
+
+    Falls back to vssh (Wire VPN) if SCP fails.
     """
     ip = _resolve_node_ip(node)
+    if _ssh_put(local_path, ip, remote_path):
+        return True
+    # Fallback: vssh
     try:
         import vssh
         vssh.put(local_path, ip, remote_path)
         return True
-    except ImportError:
-        r = subprocess.run(
-            ["vssh", "put", local_path, f"{ip}:{remote_path}"],
-            capture_output=True, text=True, timeout=120
-        )
-        return r.returncode == 0
+    except Exception:
+        return False
 
 
 # ── Build ───────────────────────────────────────────────────────────
@@ -854,14 +883,14 @@ def remote_up(host: str, config_path: str, env: dict = None,
     Example::
 
         import meshclaw
-        # Deploy a system monitor to any VPS
-        meshclaw.remote_up("my-vps.example.com",
+        # Deploy via Tailscale IP (recommended — works anywhere)
+        meshclaw.remote_up("100.x.x.x",
                           "system-monitor",
-                          env={"OLLAMA_URL": "http://localhost:11434"})
-        # Use Ollama on the remote server — no API key needed
-        meshclaw.remote_up("192.168.1.100",
-                          "assistant",
                           env={"ANTHROPIC_API_KEY": "sk-ant-..."})
+        # Deploy to any VPS with a public IP
+        meshclaw.remote_up("my-vps.example.com",
+                          "assistant",
+                          env={"OLLAMA_URL": "http://localhost:11434"})
     """
     import shutil, tempfile
 
