@@ -2,9 +2,9 @@
 
 [![PyPI](https://img.shields.io/pypi/v/meshclaw)](https://pypi.org/project/meshclaw/)
 [![Python](https://img.shields.io/pypi/pyversions/meshclaw)](https://pypi.org/project/meshclaw/)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-**Run AI agent workflows across your infrastructure. Build → test → deploy, in one command.**
+**AI workers, anywhere. Run AI agents on any machine — no cloud, no Docker required.**
 
 ```bash
 pip install meshclaw
@@ -12,167 +12,240 @@ pip install meshclaw
 
 ---
 
-## What meshclaw does
+## What it does
+
+meshclaw turns any machine into an AI worker. One YAML file, one command to start.
 
 ```bash
-# Parallel — build and test simultaneously on different servers
-meshclaw parallel worker1:"make build" worker2:"make test"
+# 1. Pick a template
+meshclaw templates
 
-# Pipeline — sequential, stops on first failure
-meshclaw pipeline worker1:"make build" worker2:"make test" relay1:"./deploy.sh"
+# 2. Init your worker
+meshclaw init assistant
 
-# Broadcast — same command on every node
-meshclaw broadcast "pip install --upgrade meshpop"
+# 3. Start it
+meshclaw start assistant
+
+# 4. Talk to it
+meshclaw chat assistant
+meshclaw ask assistant "check disk usage"
 ```
 
-meshclaw turns your servers, containers, and local runtimes into a unified execution surface. One command to run distributed workflows.
-
 ---
 
-## Key features
-
-**Parallel execution** — different tasks on different nodes simultaneously. A build on worker1 and tests on worker2 finish in the time of the slower one.
-
-**Pipelines** — chain tasks with dependency ordering. Build must succeed before tests run; tests must pass before deploy.
-
-**Broadcast** — same command across all discovered nodes. Fleet-wide updates, health checks, config pushes.
-
-**Signal coordination** — agents wait for signals from other agents before proceeding, enabling complex multi-step workflows.
-
-**Single-machine mode** — works locally with Docker, LXC, or rtlinux containers as nodes. Same API whether you have one machine or twenty.
-
----
-
-## Quick Start
-
-### Discover nodes
+## Quick Start — Ollama (no API key)
 
 ```bash
-meshclaw discover
+pip install meshclaw
+ollama pull qwen2.5:7b
+
+meshclaw init assistant
+# edit ~/.meshclaw/assistant/template.yaml → set model: ollama/qwen2.5:7b
+
+meshclaw start assistant
+meshclaw chat assistant
 ```
 
-Finds all nodes on the wire network (or from config).
+---
 
-### Run commands
+## Quick Start — Claude / OpenAI
 
 ```bash
-# Single node
-meshclaw exec "uptime" -s worker1
+pip install meshclaw
 
-# Parallel
-meshclaw parallel worker1:"make build" worker2:"make test"
-
-# Pipeline (stops on failure)
-meshclaw pipeline worker1:"make build" worker2:"make test" relay1:"./deploy.sh"
-
-# Broadcast to all nodes
-meshclaw broadcast "systemctl status nginx"
-
-# History
-meshclaw history
+export ANTHROPIC_API_KEY=sk-ant-...
+meshclaw init assistant
+meshclaw start assistant
+meshclaw chat assistant
 ```
 
 ---
 
-## Python API
+## Template YAML
 
-```python
-from meshclaw import Orchestrator, Task
+```yaml
+name: my-worker
+model: ollama/qwen2.5:7b        # or claude-sonnet-4-6, gpt-4o, etc.
+system_prompt: |
+  You are a helpful assistant with bash access.
 
-with Orchestrator() as orch:
-    orch.discover()
+schedule: "every 1h"
+schedule_script: |
+  #!/bin/bash
+  echo "=== $(date) ==="
+  df -h
+  uptime
 
-    # Parallel
-    orch.parallel("build-and-test", [
-        Task("build", command="make build", server="worker1"),
-        Task("test",  command="make test",  server="worker2"),
-    ])
+on_message: "Help with the user's request. Use bash for real data."
 
-    # Pipeline
-    orch.pipeline("release", [
-        {"server": "worker1", "command": "make build"},
-        {"server": "worker2", "command": "make test"},
-        {"server": "relay1",  "command": "./deploy.sh"},
-    ])
-
-    # Broadcast
-    orch.broadcast("systemctl reload nginx")
+notify:
+  platform: telegram
+  token: YOUR_BOT_TOKEN
+  chat_id: YOUR_CHAT_ID
 ```
 
 ---
 
-## Single-Machine Mode
-
-Works without a network — local runtimes treated as nodes:
+## Built-in Templates
 
 ```bash
-meshclaw parallel \
-  docker:trainer1:"python train.py --shard 0" \
-  docker:trainer2:"python train.py --shard 1" \
-  docker:trainer3:"python train.py --shard 2"
+meshclaw templates
 ```
 
-Supports Docker containers, LXC containers, rtlinux instances, and the host machine.
-
----
-
-## MCP Integration
-
-```json
-{
-  "mcpServers": {
-    "meshclaw": { "command": "meshclaw-mcp" }
-  }
-}
-```
-
-> "Run the build on worker1 and tests on worker2 in parallel"
-> "Deploy to all production nodes"
-> "What's the history of deployments this week?"
-> "Run a health check broadcast across the fleet"
+| Template | Model | Use case |
+|---|---|---|
+| `assistant` | claude / ollama | General purpose with bash |
+| `system-monitor` | ollama | CPU/memory/disk alerts |
+| `news` | claude-haiku | Hourly news digest |
+| `research` | claude | Web research + summary |
+| `orchestrator` | ollama | Fan-out to remote workers |
+| `code-reviewer` | claude | Git diff review |
+| `mac-assistant` | claude | macOS Calendar, Mail |
 
 ---
 
 ## CLI Reference
 
 ```bash
-meshclaw discover                     # Find available nodes
-meshclaw exec "<cmd>" -s <node>       # Run on specific node
-meshclaw parallel <node>:<cmd> ...    # Parallel execution
-meshclaw pipeline <node>:<cmd> ...    # Sequential pipeline
-meshclaw broadcast "<cmd>"            # All nodes
-meshclaw history [count] [filter]     # Command history
-meshclaw version                      # Show version
+meshclaw init <template>          # Scaffold from template
+meshclaw start <name>             # Start worker in background
+meshclaw stop <name>              # Stop worker
+meshclaw restart <name>           # Restart worker
+meshclaw ps                       # List running workers
+meshclaw ask <name> "<message>"   # One-shot message
+meshclaw chat <name>              # Interactive chat
+meshclaw webchat --worker <name>  # Browser/mobile UI
+meshclaw templates                # List built-in templates
+meshclaw version                  # Show version
 ```
 
 ---
 
-## Architecture
+## Scheduled Tasks
 
-meshclaw uses only what's available — components are optional:
+Workers can run on a schedule — with LLM or without (bash-only, no hallucination):
 
-```
-meshclaw (Orchestrator)
-   ├── vssh      command execution
-   ├── wire      node discovery (optional)
-   ├── mpop      scheduling (optional)
-   └── meshdb    state and search (optional)
+```yaml
+# With LLM
+schedule: "every 1h"
+schedule_task: "Summarize the latest news and report key trends."
+
+# Bash only — real data, no hallucination
+schedule: "every 15m"
+schedule_script: |
+  #!/bin/bash
+  FREE=$(df -h / | awk 'NR==2{print $5}')
+  echo "Disk: $FREE used"
 ```
 
 ---
 
-## MeshPOP Stack
+## Notifications
 
+Send results to Telegram, Slack, Discord, or any webhook after each scheduled run:
+
+```yaml
+notify:
+  platform: telegram       # telegram / slack / discord / webhook
+  token: YOUR_BOT_TOKEN
+  chat_id: YOUR_CHAT_ID
 ```
-mpop      Fleet orchestration
-vssh      Authenticated transport
-wire      Encrypted mesh VPN
-meshclaw  Agent workflows  ← this
-meshdb    Distributed search
+
+---
+
+## Orchestration — Multiple Workers
+
+Deploy workers to remote servers and coordinate them via SSH:
+
+```bash
+# Deploy to remote server
+meshclaw remote-up 192.168.1.100 system-monitor
+
+# Ask a remote worker
+ssh root@192.168.1.100 "meshclaw ask system-monitor 'disk status'"
 ```
+
+Fan-out to multiple workers in parallel (Python):
+
+```python
+import subprocess, concurrent.futures
+
+WORKERS = {
+    "g1": "192.168.1.101",
+    "g2": "192.168.1.102",
+}
+
+def ask_remote(ip, name, task):
+    r = subprocess.run(
+        ["ssh", f"root@{ip}", f"meshclaw ask {name} '{task}'"],
+        capture_output=True, text=True, timeout=120
+    )
+    return r.stdout.strip()
+
+with concurrent.futures.ThreadPoolExecutor() as ex:
+    results = {g: ex.submit(ask_remote, ip, f"{g}-worker", "status report")
+               for g, ip in WORKERS.items()}
+    for g, f in results.items():
+        print(f"{g}: {f.result()}")
+```
+
+Or use the built-in `orchestrator` template which does this automatically.
+
+---
+
+## Python API
+
+```python
+import meshclaw
+
+# Local worker
+reply = meshclaw.ask_worker("my-worker", "what is the disk usage?")
+print(reply)
+
+# Deploy to remote server
+meshclaw.remote_up("192.168.1.100", "system-monitor",
+                   env={"OLLAMA_URL": "http://localhost:11434"})
+
+# Send notification
+meshclaw.notify("telegram", "Worker finished!", token="...", chat_id="...")
+```
+
+---
+
+## MeshPOP Stack (optional)
+
+For faster transport and secret management, add the meshpop engine:
+
+```bash
+pip install meshclaw[meshpop]
+```
+
+| Component | Role |
+|---|---|
+| `wire` | WireGuard VPN mesh (faster than Tailscale) |
+| `vssh` | Authenticated file transfer |
+| `vault` | Secrets management |
+
+meshclaw works without these — Tailscale SSH is enough for most use cases.
+
+---
+
+## Install from GitHub
+
+```bash
+pip install git+https://github.com/meshclaw/meshclaw.git
+```
+
+---
+
+## Links
+
+- PyPI: https://pypi.org/project/meshclaw/
+- GitHub: https://github.com/meshclaw/meshclaw
+- Homepage: https://meshclaw.run
 
 ---
 
 ## License
 
-MIT — [MeshPOP](https://github.com/meshpop)
+Apache-2.0 — [meshclaw](https://github.com/meshclaw)
