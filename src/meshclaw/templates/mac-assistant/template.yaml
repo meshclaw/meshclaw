@@ -41,6 +41,19 @@ system_prompt: |
     does and ask "실행할까요?" before proceeding
   - Keep responses short and conversational
 
+# Worker routing: @워커명 으로 원격 meshclaw 워커 호출
+# 키 = @멘션 이름, host = SSH 호스트, worker = meshclaw worker 이름
+# 예: "@g1 뉴스 검색해줘" → ssh g1 'meshclaw ask g1-worker "뉴스 검색해줘"'
+# 비워두면 @라우팅 비활성화
+workers: {}
+# workers:
+#   g1:
+#     host: g1
+#     worker: g1-worker
+#   g2:
+#     host: g2
+#     worker: g2-worker
+
 packages:
   - anthropic
   - psutil

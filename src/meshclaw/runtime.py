@@ -140,12 +140,97 @@ _BASH_TOOL = {
 }
 
 
-def _call_llm_claude_code(system: str, user_prompt: str, api_key: str) -> str:
-    """Use `claude -p` subprocess (Claude Code agent) to answer.
+def _collect_mac_context() -> str:
+    """Pre-collect real Mac system data to inject into prompts."""
+    cmds = {
+        "disk": "df -h | grep -E '^/dev/disk'",
+        "memory_stats": "vm_stat | grep -E 'Pages (free|active|wired|compressed):'",
+        "mem_total": "sysctl -n hw.memsize",
+        "cpu_load": "sysctl -n vm.loadavg",
+        "os": "sw_vers -productVersion",
+        "uptime": "uptime",
+    }
+    results = []
+    for key, cmd in cmds.items():
+        try:
+            import subprocess as _sp
+            out = _sp.run(cmd, shell=True, capture_output=True, text=True, timeout=5).stdout.strip()
+            if out:
+                results.append(f"[{key}]\n{out}")
+        except Exception:
+            pass
+    return "\n".join(results)
 
-    Claude Code handles its own tool loop natively — bash, file read/write, etc.
-    Requires claude CLI on PATH and ANTHROPIC_API_KEY.
+
+def _preprocess_worker_routing(user_prompt: str, workers: dict | None = None) -> str:
+    """@워커명 멘션을 명시적인 bash SSH 명령으로 변환해서 LLM 오해 방지.
+
+    workers: config/template.yaml 의 'workers' 섹션. 없으면 라우팅 안 함.
+
+    template.yaml 설정 예시:
+        workers:
+          g1:                  # @g1 로 호출
+            host: g1           # SSH 호스트 (기본값: 키 이름)
+            worker: g1-worker  # meshclaw worker 이름 (기본값: 키-worker)
+          gpu2:
+            host: 192.168.1.50
+            worker: llm-worker
+
+    단축 형식 (host == worker 이름의 앞부분):
+        workers:
+          g1: g1-worker   # host=g1, worker=g1-worker
+          g2: g2-worker
     """
+    if not workers:
+        return user_prompt
+
+    import re
+
+    # 워커 목록 정규화 → {mention: {"host": str, "worker": str}}
+    resolved = {}
+    for name, val in workers.items():
+        if isinstance(val, str):
+            # "g1": "g1-worker" 형식
+            resolved[name.lower()] = {"host": name, "worker": val}
+        elif isinstance(val, dict):
+            host   = val.get("host",   name)
+            worker = val.get("worker", f"{name}-worker")
+            resolved[name.lower()] = {"host": host, "worker": worker}
+        else:
+            resolved[name.lower()] = {"host": name, "worker": f"{name}-worker"}
+
+    if not resolved:
+        return user_prompt
+
+    # @all / @전체 → 모든 워커에 병렬 호출
+    m = re.match(r'^@(all|전체)\s+(.*)', user_prompt, re.IGNORECASE | re.DOTALL)
+    if m:
+        query = m.group(2).strip().replace('"', '\\"')
+        parts = [
+            f"ssh {w['host']} '/usr/local/bin/meshclaw ask {w['worker']} \"{query}\" --timeout 90' "
+            f"2>&1 | sed 's/^/[{n}] /'"
+            for n, w in resolved.items()
+        ]
+        cmd = "{ " + "; ".join(parts) + "; }"
+        return f'Run this bash command and show all output:\n{cmd}'
+
+    # @워커명 → 해당 워커에만 호출
+    worker_pattern = "|".join(re.escape(n) for n in resolved)
+    m = re.match(rf'^@({worker_pattern})\s+(.*)', user_prompt, re.IGNORECASE | re.DOTALL)
+    if m:
+        name  = m.group(1).lower()
+        query = m.group(2).strip().replace('"', '\\"')
+        w = resolved[name]
+        return (f'Run this bash command and return its output:\n'
+                f"ssh {w['host']} '/usr/local/bin/meshclaw ask {w['worker']} \"{query}\" --timeout 90'")
+
+    return user_prompt
+
+
+def _call_llm_claude_code(system: str, user_prompt: str, api_key: str,
+                           workers: dict | None = None) -> str:
+    """Use `claude -p` subprocess with pre-collected real Mac data injected."""
+    user_prompt = _preprocess_worker_routing(user_prompt, workers)
     claude_bin = None
     for p in ["/opt/homebrew/bin/claude", "/usr/local/bin/claude"]:
         if os.path.isfile(p):
@@ -155,16 +240,27 @@ def _call_llm_claude_code(system: str, user_prompt: str, api_key: str) -> str:
         return "Error: claude CLI not found"
 
     env = {**os.environ,
-           "PATH": "/opt/homebrew/bin:/usr/local/bin:" + os.environ.get("PATH", ""),
-           "ANTHROPIC_API_KEY": api_key}
+           "PATH": "/opt/homebrew/bin:/usr/local/bin:" + os.environ.get("PATH", "")}
+    if api_key:
+        env["ANTHROPIC_API_KEY"] = api_key
 
-    # Prepend system prompt as context since --system flag isn't stable across versions
-    full_prompt = f"[System context: {system}]\n\nUser: {user_prompt}" if system else user_prompt
+    # Pre-collect real system data so model never hallucinates numbers
+    mac_ctx = _collect_mac_context()
+    ctx_block = (
+        f"\n\n[REAL SYSTEM DATA — always use these exact numbers, never make up data]\n{mac_ctx}\n[END SYSTEM DATA]"
+        if mac_ctx else ""
+    )
+
+    full_prompt = (
+        f"[System context: {system}]{ctx_block}\n\nUser: {user_prompt}"
+        if system else
+        f"{ctx_block}\n\nUser: {user_prompt}"
+    )
 
     try:
         result = subprocess.run(
-            [claude_bin, "-p", full_prompt,
-             "--allowedTools", "Bash",
+            [claude_bin, "-p", full_prompt, "--dangerously-skip-permissions",
+             "--allowedTools", "Bash,WebFetch,WebSearch",
              "--output-format", "text"],
             capture_output=True, text=True, timeout=120, env=env,
         )
@@ -176,7 +272,6 @@ def _call_llm_claude_code(system: str, user_prompt: str, api_key: str) -> str:
         return "(timeout after 120s)"
     except Exception as e:
         return f"Error (claude-code): {e}"
-
 
 def _call_llm_codex(system: str, user_prompt: str) -> str:
     """Use `codex exec` (OpenAI Codex CLI) as agent backend.
@@ -228,10 +323,10 @@ def call_llm(config: dict, user_prompt: str) -> str:
 
     # ── Claude Code agent path (model = "claude-code") ──────────────────
     if model == "claude-code":
+        # API key optional — claude CLI authenticates via Claude Code subscription (OAuth)
         api_key = os.environ.get("ANTHROPIC_API_KEY", "")
-        if not api_key:
-            return "Error: ANTHROPIC_API_KEY not set"
-        return _call_llm_claude_code(system, user_prompt, api_key)
+        workers = config.get("workers") or {}
+        return _call_llm_claude_code(system, user_prompt, api_key, workers)
 
     # ── OpenAI Codex CLI agent path (model = "codex") ────────────────────
     if model == "codex":
