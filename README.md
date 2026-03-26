@@ -1,166 +1,129 @@
-# meshclaw
+# Meshclaw
 
-[![PyPI](https://img.shields.io/pypi/v/meshclaw)](https://pypi.org/project/meshclaw/)
-[![Python](https://img.shields.io/pypi/pyversions/meshclaw)](https://pypi.org/project/meshclaw/)
-[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+Distributed infrastructure toolkit with mesh networking, secure shell, and AI worker runtime.
 
-**AI workers, anywhere. Run AI agents on any machine — no cloud, no Docker required.**
+## Components
 
-```bash
-pip install meshclaw
-```
+| Binary | Description |
+|--------|-------------|
+| `wire` | VPN mesh networking daemon |
+| `vssh` | Secure shell over mesh network |
+| `mpop` | Server status dashboard & CLI |
+| `meshclaw` | AI worker runtime |
+| `meshdb` | Local distributed database |
+| `vault` | Secrets management |
 
----
+## Installation
 
-## What it does
-
-meshclaw turns any machine into an AI worker. One YAML file, one command to start.
-
-```bash
-meshclaw templates               # browse built-in templates
-meshclaw init assistant          # scaffold config
-meshclaw start assistant         # run in background
-meshclaw chat assistant          # interactive chat
-meshclaw ask assistant "status"  # one-shot
-```
-
----
-
-## Quick Start — Ollama (no API key)
+### One-line install
 
 ```bash
-pip install meshclaw
-ollama pull qwen2.5:7b
-
-meshclaw init assistant
-# edit ~/.meshclaw/assistant/template.yaml → model: ollama/qwen2.5:7b
-
-meshclaw start assistant
-meshclaw chat assistant
+curl -sL https://raw.githubusercontent.com/meshclaw/meshclaw/main/install.sh | bash
 ```
 
----
-
-## Quick Start — Claude / OpenAI
+### Build from source
 
 ```bash
-pip install meshclaw
-export ANTHROPIC_API_KEY=sk-ant-...
-meshclaw init assistant
-meshclaw start assistant
+git clone https://github.com/meshclaw/meshclaw.git
+cd meshclaw
+make build
+sudo make install
 ```
 
----
-
-## Template YAML
-
-```yaml
-name: my-worker
-model: ollama/qwen2.5:7b        # or claude-sonnet-4-6, gpt-4o, etc.
-system_prompt: |
-  You are a helpful assistant with bash access.
-
-schedule: "every 1h"
-schedule_script: |
-  #!/bin/bash
-  echo "=== $(date) ==="
-  df -h && uptime
-
-on_message: "Help with the user's request. Use bash for real data."
-
-notify:
-  platform: telegram
-  token: YOUR_BOT_TOKEN
-  chat_id: YOUR_CHAT_ID
-```
-
----
-
-## Built-in Templates
-
-| Template | Model | Use case |
-|---|---|---|
-| `assistant` | claude / ollama | General purpose with bash |
-| `system-monitor` | ollama | CPU/memory/disk alerts |
-| `news` | claude-haiku | Hourly news digest |
-| `research` | claude | Web research + summary |
-| `orchestrator` | ollama | Fan-out to remote workers |
-| `code-reviewer` | claude | Git diff review |
-| `mac-assistant` | claude | macOS Calendar, Mail |
-
----
-
-## CLI Reference
+## Quick Start
 
 ```bash
-meshclaw init <template>          # Scaffold from template
-meshclaw start <name>             # Start worker in background
-meshclaw stop <name>              # Stop worker
-meshclaw restart <name>           # Restart worker
-meshclaw ps                       # List running workers
-meshclaw ask <name> "<message>"   # One-shot message
-meshclaw chat <name>              # Interactive chat
-meshclaw webchat --worker <name>  # Browser/mobile UI
-meshclaw templates                # List built-in templates
-meshclaw version                  # Show version
+# Initialize mpop configuration
+mpop init
+
+# View server dashboard
+mpop
+
+# Register with VPN mesh
+wire register
+
+# Start services (Linux)
+sudo systemctl enable --now wire vssh
 ```
 
----
+## mpop - Dashboard CLI
 
-## Scheduled Tasks
-
-```yaml
-# With LLM
-schedule: "every 1h"
-schedule_task: "Summarize the latest news and report key trends."
-
-# Bash only — real data, no hallucination
-schedule: "every 15m"
-schedule_script: |
-  #!/bin/bash
-  df -h / | awk 'NR==2{print "Disk: "$5" used"}'
-```
-
----
-
-## Notifications
-
-```yaml
-notify:
-  platform: telegram       # telegram / slack / discord / webhook
-  token: YOUR_BOT_TOKEN
-  chat_id: YOUR_CHAT_ID
-```
-
----
-
-## Orchestration — Multiple Workers
+Monitor infrastructure from the command line.
 
 ```bash
-# Deploy to remote server
-meshclaw remote-up 192.168.1.100 system-monitor
-
-# Ask a remote worker via SSH
-ssh root@192.168.1.100 "meshclaw ask system-monitor 'disk status'"
+mpop                    # Show dashboard
+mpop exec all uptime    # Run on all servers
+mpop peers              # List VPN peers
+mpop info node1         # Server details
 ```
 
-Fan-out to multiple workers in parallel:
+## wire - VPN Mesh
 
-```python
-import subprocess, concurrent.futures
+P2P VPN mesh with automatic NAT traversal and relay support.
 
-WORKERS = {"g1": "192.168.1.101", "g2": "192.168.1.102"}
-
-def ask_remote(ip, name, task):
-    r = subprocess.run(["ssh", f"root@{ip}", f"meshclaw ask {name} '{task}'"],
-                       capture_output=True, text=True, timeout=120)
-    return r.stdout.strip()
-
-with concurrent.futures.ThreadPoolExecutor() as ex:
-    results = {g: ex.submit(ask_remote, ip, f"{g}-worker", "status")
-               for g, ip in WORKERS.items()}
-    for g, f in results.items():
-        print(f"{g}: {f.result()}")
+```bash
+wire register           # Register with coordinator
+wire daemon             # Run as daemon
+wire status             # Show connection status
+wire peers              # List peers
 ```
 
-Use the built-in `orchestrator` template to do this automatically on a schedule.
+## vssh - Secure Shell
+
+Execute commands on remote servers over the mesh network.
+
+```bash
+vssh exec node1 uptime          # Run command
+vssh server                     # Start vssh server
+vssh cp localfile node1:/path   # Copy file
+```
+
+## meshclaw - AI Worker
+
+Distributed AI worker runtime for running LLM tasks.
+
+```bash
+meshclaw init assistant         # Create worker from template
+meshclaw start assistant        # Start worker
+meshclaw ask assistant "query"  # One-shot query
+meshclaw chat assistant         # Interactive chat
+meshclaw ps                     # List workers
+meshclaw templates              # List templates
+```
+
+### Templates
+
+- `assistant` - General purpose with bash tools
+- `system-monitor` - CPU/memory/disk monitoring
+- `code-reviewer` - Git diff review
+- `research` - Web research and summary
+- `devops` - Infrastructure automation
+
+## Configuration
+
+Configuration in `~/.mpop/config.json`:
+
+```json
+{
+  "servers": {
+    "node1": {"ip": "10.98.x.x", "user": "root"},
+    "node2": {"ip": "10.98.x.x", "user": "root"}
+  },
+  "connection": {
+    "vpn": "wire",
+    "ssh_method": "vssh"
+  }
+}
+```
+
+## Environment Variables
+
+| Variable | Description |
+|----------|-------------|
+| `WIRE_SERVER_URL` | Wire coordinator URL |
+| `VSSH_SECRET` | vssh authentication secret |
+| `ANTHROPIC_API_KEY` | Claude API key for meshclaw |
+
+## License
+
+MIT

@@ -1,53 +1,26 @@
-# Python
-__pycache__/
-*.py[cod]
-*.pyo
-*.pyd
-.Python
+# Binaries
+bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
 
-# Build / packaging
-*.egg-info/
-*.egg
-dist/
-build/
-wheels/
-pip-wheel-metadata/
-share/python-wheels/
-*.tar.gz
-*.whl
-MANIFEST
+# Test binary
+*.test
 
-# Virtual environments
-.venv/
-venv/
-env/
-ENV/
-
-# Test / coverage
-.pytest_cache/
-.coverage
-.coverage.*
-htmlcov/
-.tox/
-*.lcov
+# Output of go coverage
+*.out
 
 # IDE
 .idea/
 .vscode/
 *.swp
 *.swo
-*~
 
 # OS
 .DS_Store
 Thumbs.db
 
-# Secrets / local config
-.env
-*.key
-*.pem
-*.p12
-# Internal infra docs — never commit
-ARCHITECTURE.md
-docs/ARCHITECTURE.md
-docs/API_ARCHITECTURE.md
+# Config (may contain secrets)
+*.local.json
