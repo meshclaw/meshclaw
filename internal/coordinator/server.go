@@ -72,10 +72,16 @@ func (s *Server) ensureDefaultNetwork() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if _, exists := s.networks[DefaultNetwork]; !exists {
+		// Allow subnet to be configured via environment variable
+		// WIRE_SUBNET=10.99 for old network, default 10.98 for new network
+		subnet := os.Getenv("WIRE_SUBNET")
+		if subnet == "" {
+			subnet = "10.98"
+		}
 		s.networks[DefaultNetwork] = &Network{
 			Name:      DefaultNetwork,
-			Subnet:    "10.98", // 10.98 to avoid conflict with Python version (10.99)
-			AccessKey: "",      // No key required for default
+			Subnet:    subnet,
+			AccessKey: "",
 			CreatedAt: time.Now().Unix(),
 		}
 		s.peers[DefaultNetwork] = make(map[string]*Peer)
@@ -337,6 +343,12 @@ func (s *Server) mergeData(networks []*Network, peers []*Peer) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	// Get local subnet to filter incoming peers
+	localSubnet := ""
+	if defaultNet := s.networks[DefaultNetwork]; defaultNet != nil {
+		localSubnet = defaultNet.Subnet
+	}
+
 	updated := 0
 
 	// Merge networks (don't overwrite existing)
@@ -348,13 +360,17 @@ func (s *Server) mergeData(networks []*Network, peers []*Peer) int {
 		}
 	}
 
-	// Merge peers
+	// Merge peers - only accept peers in the same subnet as this coordinator
 	for _, p := range peers {
 		if p.Network == "" {
 			p.Network = DefaultNetwork
 		}
 		if s.peers[p.Network] == nil {
 			continue // Network doesn't exist locally
+		}
+		// Skip peers from different subnets to prevent cross-network sync
+		if localSubnet != "" && p.VpnIP != "" && !strings.HasPrefix(p.VpnIP, localSubnet+".") {
+			continue
 		}
 		existing, exists := s.peers[p.Network][p.NodeID]
 		if !exists || p.LastSeen > existing.LastSeen {
@@ -379,6 +395,15 @@ func (s *Server) gossipLoop() {
 
 func (s *Server) gossipOnce() {
 	s.mu.RLock()
+
+	// Get the default network's subnet for this coordinator
+	defaultNet := s.networks[DefaultNetwork]
+	if defaultNet == nil {
+		s.mu.RUnlock()
+		return
+	}
+	localSubnet := defaultNet.Subnet // e.g., "10.98"
+
 	networks := make([]*Network, 0, len(s.networks))
 	allPeers := make([]*Peer, 0)
 	coordURLs := make(map[string]bool)
@@ -389,10 +414,9 @@ func (s *Server) gossipOnce() {
 	for _, networkPeers := range s.peers {
 		for _, p := range networkPeers {
 			allPeers = append(allPeers, p)
-			if p.PublicIP != "" {
-				coordURLs[fmt.Sprintf("http://%s:%d", p.PublicIP, CoordPort)] = true
-			}
-			if p.VpnIP != "" {
+			// Only gossip with peers in the SAME subnet as this coordinator
+			// This prevents cross-network gossip between separate VPNs
+			if p.VpnIP != "" && strings.HasPrefix(p.VpnIP, localSubnet+".") {
 				coordURLs[fmt.Sprintf("http://%s:%d", p.VpnIP, CoordPort)] = true
 			}
 		}

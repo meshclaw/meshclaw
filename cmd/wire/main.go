@@ -179,14 +179,15 @@ func cmdUp(foreground, isRelay bool, network string) {
 
 	// Get or create network-specific config
 	nc := cfg.GetNetworkConfig(network)
-	if nc == nil {
-		// Fetch network info from coordinator
-		netInfo, err := wire.GetNetworkInfo(cfg.ServerURL, network)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to get network info: %v\n", err)
-			os.Exit(1)
-		}
 
+	// Always fetch network info to check if subnet has changed
+	netInfo, err := wire.GetNetworkInfo(cfg.ServerURL, network)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to get network info: %v\n", err)
+		os.Exit(1)
+	}
+
+	if nc == nil {
 		nc = &wire.NetworkConfig{
 			Network:    network,
 			AccessKey:  os.Getenv("WIRE_ACCESS_KEY"),
@@ -194,6 +195,12 @@ func cmdUp(foreground, isRelay bool, network string) {
 			Interface:  cfg.NextInterface(),
 			ListenPort: cfg.NextPort(),
 		}
+		nc.VpnIP = wire.GenerateVpnIPForNetwork(cfg.NodeID, network, nc.VpnSubnet)
+		cfg.SetNetworkConfig(nc)
+	} else if nc.VpnSubnet != netInfo.Subnet {
+		// Subnet changed on coordinator - regenerate VPN IP
+		fmt.Printf("  Subnet changed from %s to %s, regenerating VPN IP\n", nc.VpnSubnet, netInfo.Subnet)
+		nc.VpnSubnet = netInfo.Subnet
 		nc.VpnIP = wire.GenerateVpnIPForNetwork(cfg.NodeID, network, nc.VpnSubnet)
 		cfg.SetNetworkConfig(nc)
 	}
