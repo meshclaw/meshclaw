@@ -8,21 +8,36 @@ import (
 
 // Config represents meshclaw configuration
 type Config struct {
-	Name        string            `json:"name"`
-	Description string            `json:"description,omitempty"`
-	Model       string            `json:"model,omitempty"`
-	Provider    string            `json:"provider,omitempty"`
-	SystemPrompt string           `json:"system_prompt,omitempty"`
-	Tools       []string          `json:"tools,omitempty"`
-	Schedule    []ScheduleConfig  `json:"schedule,omitempty"`
-	Workers     map[string]Worker `json:"workers,omitempty"`
-	Env         map[string]string `json:"env,omitempty"`
+	Name           string            `json:"name"`
+	Description    string            `json:"description,omitempty"`
+	Model          string            `json:"model,omitempty"`
+	Provider       string            `json:"provider,omitempty"` // anthropic, openai, ollama
+	SystemPrompt   string            `json:"system_prompt,omitempty"`
+	Tools          []string          `json:"tools,omitempty"`
+	OnMessage      string            `json:"on_message,omitempty"`
+	Schedule       string            `json:"schedule,omitempty"`        // "every 1h", "every 15m"
+	ScheduleTask   string            `json:"schedule_task,omitempty"`   // LLM task
+	ScheduleScript string            `json:"schedule_script,omitempty"` // Bash script
+	Notify         *NotifyConfig     `json:"notify,omitempty"`
+	Workers        map[string]Worker `json:"workers,omitempty"`
+	Env            map[string]string `json:"env,omitempty"`
+	WebChat        *WebChatConfig    `json:"webchat,omitempty"`
 }
 
-// ScheduleConfig for scheduled tasks
-type ScheduleConfig struct {
-	Interval string `json:"interval"` // "5m", "1h", "1d"
-	Task     string `json:"task"`
+// NotifyConfig for notifications
+type NotifyConfig struct {
+	Platform  string `json:"platform"`            // telegram, slack, discord, webhook
+	Token     string `json:"token,omitempty"`     // Bot token
+	ChatID    string `json:"chat_id,omitempty"`   // Telegram chat ID
+	Channel   string `json:"channel,omitempty"`   // Slack channel
+	WebhookURL string `json:"webhook_url,omitempty"`
+}
+
+// WebChatConfig for web UI
+type WebChatConfig struct {
+	Port     int    `json:"port,omitempty"`
+	Host     string `json:"host,omitempty"`
+	Password string `json:"password,omitempty"`
 }
 
 // Worker represents a remote worker

@@ -133,6 +133,19 @@ func RunWorkerLoop(cfg *Config, socketPath string) {
 
 	fmt.Printf("[%s] Worker started, listening on %s\n", cfg.Name, socketPath)
 
+	// Create stop channel for graceful shutdown
+	stopCh := make(chan struct{})
+
+	// Start scheduler if configured
+	if cfg.Schedule != "" {
+		go RunScheduler(cfg, stopCh)
+	}
+
+	// Start webchat if configured
+	if cfg.WebChat != nil {
+		go StartWebChat(cfg, stopCh)
+	}
+
 	// Handle connections
 	for {
 		conn, err := listener.Accept()
@@ -167,6 +180,8 @@ func processMessage(cfg *Config, message string) string {
 	switch cfg.Provider {
 	case "anthropic":
 		return callAnthropic(cfg, message)
+	case "openai":
+		return callOpenAI(cfg, message)
 	case "ollama":
 		return callOllama(cfg, message)
 	default:

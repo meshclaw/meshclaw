@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"os/exec"
 	"sort"
 	"strings"
 	"time"
@@ -29,12 +30,15 @@ func main() {
 		"up":        cmdStart, // alias
 		"stop":      cmdStop,
 		"down":      cmdStop, // alias
+		"restart":   cmdRestart,
 		"ps":        cmdPS,
 		"list":      cmdPS, // alias
 		"logs":      cmdLogs,
 		"ask":       cmdAsk,
 		"chat":      cmdChat,
+		"webchat":   cmdWebChat,
 		"run":       cmdRun,
+		"remote-up": cmdRemoteUp,
 		"templates": cmdTemplates,
 		"help":      cmdHelp,
 		"-h":        cmdHelp,
@@ -147,6 +151,30 @@ func cmdStop(args []string) {
 	}
 
 	fmt.Printf("%s✓%s Stopped worker '%s'\n", common.Green, common.Reset, name)
+}
+
+func cmdRestart(args []string) {
+	if len(args) < 1 {
+		fmt.Println("Usage: meshclaw restart <name>")
+		os.Exit(1)
+	}
+
+	name := args[0]
+
+	// Stop if running
+	meshclaw.StopWorker(name)
+	time.Sleep(500 * time.Millisecond)
+
+	// Find config and start
+	configPath := meshclaw.WorkersDir() + "/" + name + "/config.json"
+	state, err := meshclaw.StartWorker(configPath, false)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("%s✓%s Restarted worker '%s' (PID %d)\n",
+		common.Green, common.Reset, state.Name, state.PID)
 }
 
 func cmdPS(args []string) {
@@ -294,6 +322,97 @@ func cmdRun(args []string) {
 	meshclaw.RunWorkerLoop(cfg, socketPath)
 }
 
+func cmdWebChat(args []string) {
+	if len(args) < 1 {
+		fmt.Println("Usage: meshclaw webchat <name> [--port <port>]")
+		os.Exit(1)
+	}
+
+	name := args[0]
+	port := 8080
+
+	// Parse --port flag
+	for i, arg := range args {
+		if (arg == "--port" || arg == "-p") && i+1 < len(args) {
+			fmt.Sscanf(args[i+1], "%d", &port)
+		}
+	}
+
+	// Load config
+	configPath := meshclaw.WorkersDir() + "/" + name + "/config.json"
+	cfg, err := meshclaw.LoadConfig(configPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Override webchat config
+	cfg.WebChat = &meshclaw.WebChatConfig{
+		Port: port,
+		Host: "0.0.0.0",
+	}
+
+	fmt.Printf("%sStarting webchat for %s on port %d%s\n",
+		common.Cyan, name, port, common.Reset)
+	fmt.Printf("Open: http://localhost:%d\n\n", port)
+
+	server := meshclaw.NewWebChatServer(cfg)
+	if err := server.Start(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+func cmdRemoteUp(args []string) {
+	if len(args) < 2 {
+		fmt.Println("Usage: meshclaw remote-up <host> <template|name>")
+		fmt.Println()
+		fmt.Println("Deploy a worker to a remote server via SSH.")
+		fmt.Println()
+		fmt.Println("Examples:")
+		fmt.Println("  meshclaw remote-up 192.168.1.100 system-monitor")
+		fmt.Println("  meshclaw remote-up root@server.local assistant")
+		os.Exit(1)
+	}
+
+	host := args[0]
+	template := args[1]
+
+	fmt.Printf("%sDeploying %s to %s...%s\n", common.Cyan, template, host, common.Reset)
+
+	// Check if meshclaw is installed on remote
+	checkCmd := "which meshclaw || echo 'not found'"
+	result := sshExec(host, checkCmd)
+	if strings.Contains(result, "not found") {
+		fmt.Println("Installing meshclaw on remote...")
+		sshExec(host, "curl -sL https://raw.githubusercontent.com/meshclaw/meshclaw/main/install.sh | bash")
+	}
+
+	// Initialize worker on remote
+	fmt.Printf("Initializing %s...\n", template)
+	sshExec(host, fmt.Sprintf("meshclaw init %s --template %s", template, template))
+
+	// Start worker on remote
+	fmt.Printf("Starting %s...\n", template)
+	sshExec(host, fmt.Sprintf("meshclaw start %s", template))
+
+	fmt.Printf("%s✓%s Deployed %s to %s\n", common.Green, common.Reset, template, host)
+	fmt.Printf("  Check: ssh %s 'meshclaw ps'\n", host)
+	fmt.Printf("  Ask:   ssh %s 'meshclaw ask %s \"status\"'\n", host, template)
+}
+
+func sshExec(host, cmd string) string {
+	sshCmd := fmt.Sprintf("ssh -o StrictHostKeyChecking=no %s '%s'", host, cmd)
+	out, _ := execCommand("sh", "-c", sshCmd)
+	return out
+}
+
+func execCommand(name string, args ...string) (string, error) {
+	cmd := exec.Command(name, args...)
+	output, err := cmd.CombinedOutput()
+	return string(output), err
+}
+
 func cmdTemplates(args []string) {
 	fmt.Println()
 	fmt.Printf("  %sAvailable Templates%s\n", common.Cyan, common.Reset)
@@ -323,10 +442,13 @@ func cmdHelp(args []string) {
 	fmt.Println("    init <name>           Create worker from template")
 	fmt.Println("    start <name>          Start worker (background)")
 	fmt.Println("    stop <name>           Stop worker")
+	fmt.Println("    restart <name>        Restart worker")
 	fmt.Println("    ps                    List workers")
 	fmt.Println("    logs <name>           View worker logs")
 	fmt.Println("    ask <name> <msg>      Send message, get response")
 	fmt.Println("    chat <name>           Interactive chat")
+	fmt.Println("    webchat <name>        Web UI for chat")
+	fmt.Println("    remote-up <host> <t>  Deploy to remote server")
 	fmt.Println("    templates             List available templates")
 	fmt.Println("    help                  Show this help")
 	fmt.Println()

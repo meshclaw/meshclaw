@@ -29,10 +29,14 @@ Be concise and efficient.`,
 Check system health (CPU, memory, disk, processes) and report issues.
 Run diagnostic commands when asked.
 Alert on critical conditions.`,
-		Tools: []string{"bash"},
-		Schedule: []ScheduleConfig{
-			{Interval: "5m", Task: "Check system health: CPU, memory, disk usage"},
-		},
+		Tools:    []string{"bash"},
+		Schedule: "every 15m",
+		ScheduleScript: `#!/bin/bash
+echo "=== $(date) ==="
+echo "Load: $(cat /proc/loadavg 2>/dev/null || sysctl -n vm.loadavg)"
+echo "Memory: $(free -h 2>/dev/null | awk 'NR==2{print $3"/"$2}' || vm_stat | head -5)"
+echo "Disk: $(df -h / | awk 'NR==2{print $5" used"}')"`,
+		ScheduleTask: "Analyze the system metrics above. Alert if anything looks concerning.",
 	},
 
 	"code-reviewer": {
@@ -68,6 +72,39 @@ Cite sources and organize findings clearly.`,
 Help with deployments, infrastructure management, and automation.
 You can run bash commands, manage services, and check logs.
 Always confirm destructive operations before executing.`,
+		Tools: []string{"bash"},
+	},
+
+	"news": {
+		Name:        "news",
+		Description: "Hourly news digest",
+		Model:       "claude-haiku-4-5-20241001",
+		Provider:    "anthropic",
+		SystemPrompt: `You are a news assistant.
+Fetch and summarize the latest news on requested topics.
+Be concise and highlight key developments.`,
+		Tools:        []string{"bash"},
+		Schedule:     "every 1h",
+		ScheduleTask: "Fetch and summarize top tech news headlines from Hacker News.",
+	},
+
+	"ollama-assistant": {
+		Name:        "ollama-assistant",
+		Description: "Local Ollama assistant (no API key needed)",
+		Model:       "llama3",
+		Provider:    "ollama",
+		SystemPrompt: `You are a helpful assistant running locally via Ollama.
+Be concise and helpful.`,
+		Tools: []string{},
+	},
+
+	"openai-assistant": {
+		Name:        "openai-assistant",
+		Description: "OpenAI GPT-4 assistant",
+		Model:       "gpt-4o",
+		Provider:    "openai",
+		SystemPrompt: `You are a helpful assistant powered by GPT-4.
+Be concise, accurate, and helpful.`,
 		Tools: []string{"bash"},
 	},
 }
@@ -107,13 +144,17 @@ func InitFromTemplate(templateName, workerName, outputDir string) (string, error
 
 	// Create config
 	cfg := &Config{
-		Name:         workerName,
-		Description:  tmpl.Description,
-		Model:        tmpl.Model,
-		Provider:     tmpl.Provider,
-		SystemPrompt: tmpl.SystemPrompt,
-		Tools:        tmpl.Tools,
-		Schedule:     tmpl.Schedule,
+		Name:           workerName,
+		Description:    tmpl.Description,
+		Model:          tmpl.Model,
+		Provider:       tmpl.Provider,
+		SystemPrompt:   tmpl.SystemPrompt,
+		Tools:          tmpl.Tools,
+		Schedule:       tmpl.Schedule,
+		ScheduleTask:   tmpl.ScheduleTask,
+		ScheduleScript: tmpl.ScheduleScript,
+		Notify:         tmpl.Notify,
+		WebChat:        tmpl.WebChat,
 	}
 
 	configPath := filepath.Join(outputDir, "config.json")
