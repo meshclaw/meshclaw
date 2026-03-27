@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "meshclaw"
-version = "1.0.0"
+version = "1.1.0"
 description = "Distributed infrastructure toolkit - VPN mesh, secure shell, AI workers"
 readme = "README.md"
 license = {text = "MIT"}
@@ -45,6 +45,7 @@ wire = "meshclaw.cli:wire"
 vssh = "meshclaw.cli:vssh"
 meshdb = "meshclaw.cli:meshdb"
 vault = "meshclaw.cli:vault"
+meshclaw-mcp = "meshclaw.mcp_server:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

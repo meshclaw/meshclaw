@@ -15,7 +15,7 @@ try:
 except ImportError:
     requests = None
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 GITHUB_REPO = "meshclaw/meshclaw"
 BINARIES = ["wire", "vssh", "mpop", "meshclaw", "meshdb", "vault"]
 
