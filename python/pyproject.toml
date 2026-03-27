@@ -1,0 +1,50 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "meshclaw"
+version = "1.0.0"
+description = "Distributed infrastructure toolkit - VPN mesh, secure shell, AI workers"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [
+    {name = "meshclaw", email = "meshclaw@example.com"}
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Intended Audience :: System Administrators",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: System :: Networking",
+    "Topic :: System :: Systems Administration",
+]
+requires-python = ">=3.8"
+dependencies = [
+    "requests>=2.25.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/meshclaw/meshclaw"
+Repository = "https://github.com/meshclaw/meshclaw"
+Issues = "https://github.com/meshclaw/meshclaw/issues"
+
+[project.scripts]
+meshclaw = "meshclaw.cli:main"
+mpop = "meshclaw.cli:mpop"
+wire = "meshclaw.cli:wire"
+vssh = "meshclaw.cli:vssh"
+meshdb = "meshclaw.cli:meshdb"
+vault = "meshclaw.cli:vault"
+
+[tool.setuptools.packages.find]
+where = ["src"]
