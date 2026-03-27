@@ -9,7 +9,7 @@ description = "Distributed infrastructure toolkit - VPN mesh, secure shell, AI w
 readme = "README.md"
 license = {text = "MIT"}
 authors = [
-    {name = "meshclaw", email = "meshclaw@example.com"}
+    {name = "meshclaw", email = "mpop@mpop.dev"}
 ]
 classifiers = [
     "Development Status :: 4 - Beta",

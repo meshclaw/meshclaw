@@ -24,3 +24,11 @@ Thumbs.db
 
 # Config (may contain secrets)
 *.local.json
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
