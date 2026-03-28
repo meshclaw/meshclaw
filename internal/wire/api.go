@@ -91,6 +91,19 @@ func GetPeers(server string) ([]Peer, error) {
 	return GetPeersForNetwork(server, "default")
 }
 
+// GetPeersWithFailover tries multiple coordinator URLs
+func GetPeersWithFailover(servers []string) ([]Peer, error) {
+	var lastErr error
+	for _, server := range servers {
+		peers, err := GetPeers(server)
+		if err == nil {
+			return peers, nil
+		}
+		lastErr = err
+	}
+	return nil, lastErr
+}
+
 // GetPeersForNetwork fetches peers from coordinator for a specific network
 func GetPeersForNetwork(server, network string) ([]Peer, error) {
 	if network == "" {

@@ -31,10 +31,11 @@ type NetworkConfig struct {
 
 // Config represents wire configuration (multi-network)
 type Config struct {
-	ServerURL string                    `json:"server_url"`
-	NodeName  string                    `json:"node_name"`
-	NodeID    string                    `json:"node_id"`
-	Networks  map[string]*NetworkConfig `json:"networks"` // network_name -> config
+	ServerURL  string                    `json:"server_url"`
+	BackupURLs []string                  `json:"backup_urls,omitempty"` // failover coordinators
+	NodeName   string                    `json:"node_name"`
+	NodeID     string                    `json:"node_id"`
+	Networks   map[string]*NetworkConfig `json:"networks"` // network_name -> config
 
 	// Legacy fields for compatibility
 	Network    string `json:"network,omitempty"`
@@ -43,6 +44,13 @@ type Config struct {
 	ListenPort int    `json:"listen_port,omitempty"`
 	RelayNode  string `json:"relay_node,omitempty"`
 	VpnSubnet  string `json:"vpn_subnet,omitempty"`
+}
+
+// GetServerURLs returns all coordinator URLs (primary + backups)
+func (c *Config) GetServerURLs() []string {
+	urls := []string{c.ServerURL}
+	urls = append(urls, c.BackupURLs...)
+	return urls
 }
 
 // ConfigPath returns path to wire config file

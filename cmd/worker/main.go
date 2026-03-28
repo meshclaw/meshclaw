@@ -68,12 +68,22 @@ func reportStats(cfg *wire.Config) {
 		"mem_total":   stats.MemTotal,
 		"mem_used":    stats.MemUsed,
 		"mem_free":    stats.MemFree,
+		"swap_total":  stats.SwapTotal,
+		"swap_used":   stats.SwapUsed,
 		"disk_total":  stats.DiskTotal,
 		"disk_used":   stats.DiskUsed,
 		"net_rx":      stats.NetRX,
 		"net_tx":      stats.NetTX,
 		"procs":       stats.Procs,
 		"connections": stats.Connections,
+		// Additional
+		"docker_count":  stats.DockerCount,
+		"gpu_count":     stats.GPUCount,
+		"gpu_mem_used":  stats.GPUMemUsed,
+		"gpu_mem_total": stats.GPUMemTotal,
+		"gpu_util":      stats.GPUUtil,
+		"io_wait":       stats.IOWait,
+		"top_process":   stats.TopProcess,
 	}
 
 	body, _ := json.Marshal(data)
@@ -112,12 +122,23 @@ type Stats struct {
 	MemTotal    int64 // MB
 	MemUsed     int64 // MB
 	MemFree     int64 // MB
+	SwapTotal   int64 // MB
+	SwapUsed    int64 // MB
 	DiskTotal   int64 // GB
 	DiskUsed    int64 // GB
 	NetRX       int64 // bytes
 	NetTX       int64 // bytes
 	Procs       int
 	Connections int
+
+	// Additional
+	DockerCount int    // running containers
+	GPUCount    int    // nvidia GPUs
+	GPUMemUsed  int    // MB
+	GPUMemTotal int    // MB
+	GPUUtil     int    // percent
+	IOWait      int    // percent
+	TopProcess  string // highest CPU process
 }
 
 func collectStats() Stats {
@@ -242,6 +263,79 @@ func collectLinuxStats(stats *Stats) {
 		if len(fields) >= 1 {
 			secs, _ := strconv.ParseFloat(fields[0], 64)
 			stats.Uptime = formatUptime(int64(secs))
+		}
+	}
+
+	// Swap
+	if data, err := os.ReadFile("/proc/meminfo"); err == nil {
+		lines := strings.Split(string(data), "\n")
+		for _, line := range lines {
+			fields := strings.Fields(line)
+			if len(fields) < 2 {
+				continue
+			}
+			val, _ := strconv.ParseInt(fields[1], 10, 64)
+			switch fields[0] {
+			case "SwapTotal:":
+				stats.SwapTotal = val / 1024
+			case "SwapFree:":
+				stats.SwapUsed = stats.SwapTotal - val/1024
+			}
+		}
+	}
+
+	// Docker container count
+	if out, err := exec.Command("docker", "ps", "-q").Output(); err == nil {
+		lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+		if lines[0] != "" {
+			stats.DockerCount = len(lines)
+		}
+	}
+
+	// GPU stats (nvidia-smi)
+	if out, err := exec.Command("nvidia-smi", "--query-gpu=count,memory.used,memory.total,utilization.gpu",
+		"--format=csv,noheader,nounits").Output(); err == nil {
+		lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+		if len(lines) > 0 {
+			parts := strings.Split(lines[0], ", ")
+			if len(parts) >= 4 {
+				stats.GPUCount, _ = strconv.Atoi(strings.TrimSpace(parts[0]))
+				stats.GPUMemUsed, _ = strconv.Atoi(strings.TrimSpace(parts[1]))
+				stats.GPUMemTotal, _ = strconv.Atoi(strings.TrimSpace(parts[2]))
+				stats.GPUUtil, _ = strconv.Atoi(strings.TrimSpace(parts[3]))
+			}
+		}
+	}
+
+	// IO Wait from /proc/stat
+	if data, err := os.ReadFile("/proc/stat"); err == nil {
+		lines := strings.Split(string(data), "\n")
+		for _, line := range lines {
+			if strings.HasPrefix(line, "cpu ") {
+				fields := strings.Fields(line)
+				if len(fields) >= 6 {
+					// iowait is field 5 (0-indexed)
+					iowait, _ := strconv.ParseInt(fields[5], 10, 64)
+					var total int64
+					for i := 1; i < len(fields); i++ {
+						v, _ := strconv.ParseInt(fields[i], 10, 64)
+						total += v
+					}
+					if total > 0 {
+						stats.IOWait = int(iowait * 100 / total)
+					}
+				}
+				break
+			}
+		}
+	}
+
+	// Top process by CPU
+	if out, err := exec.Command("sh", "-c", "ps aux --sort=-%cpu 2>/dev/null | head -2 | tail -1 | awk '{print $11}'").Output(); err == nil {
+		stats.TopProcess = strings.TrimSpace(string(out))
+		// Truncate if too long
+		if len(stats.TopProcess) > 30 {
+			stats.TopProcess = stats.TopProcess[:30]
 		}
 	}
 }

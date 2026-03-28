@@ -33,9 +33,14 @@ dist/
 build/
 *.egg
 releases/
-wire
+/wire
 wire-linux-*
 ssh-hosts.md
 vssh-mac
 .env
 scripts/mesh-status.sh
+
+# Build artifacts (root only)
+/vssh
+/worker
+/mpop

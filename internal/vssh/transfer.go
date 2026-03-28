@@ -186,20 +186,83 @@ func HandleTransfer(conn net.Conn, cmd string) {
 		conn.Write([]byte(fmt.Sprintf("SIZE %d\n", stat.Size())))
 		io.Copy(conn, f)
 
-	case "EXE": // EXEC
-		cmdStr := cmd[5:]
-		if len(cmdStr) > 0 && cmdStr[len(cmdStr)-1] == '\n' {
-			cmdStr = cmdStr[:len(cmdStr)-1]
-		}
+	case "EXE": // EXEC or EXEC_STDIN
+		// Check if it's EXEC_STDIN
+		if len(cmd) > 10 && cmd[:10] == "EXEC_STDIN" {
+			var size int64
+			var cmdStr string
+			// Parse: EXEC_STDIN <size> <command>
+			parts := cmd[11:] // after "EXEC_STDIN "
+			fmt.Sscanf(parts, "%d", &size)
+			// Find command after size
+			for i := 0; i < len(parts); i++ {
+				if parts[i] == ' ' {
+					cmdStr = parts[i+1:]
+					break
+				}
+			}
+			if len(cmdStr) > 0 && cmdStr[len(cmdStr)-1] == '\n' {
+				cmdStr = cmdStr[:len(cmdStr)-1]
+			}
 
-		// Execute command
-		out, err := execShell(cmdStr)
-		if err != nil {
-			conn.Write([]byte(fmt.Sprintf("ERROR: %v\n%s", err, out)))
+			// Send ready
+			conn.Write([]byte("READY\n"))
+
+			// Read stdin data
+			stdinData := make([]byte, size)
+			io.ReadFull(conn, stdinData)
+
+			// Execute with stdin
+			out, err := execShellWithStdin(cmdStr, stdinData)
+			if err != nil {
+				conn.Write([]byte(fmt.Sprintf("ERROR: %v\n%s", err, out)))
+			} else {
+				conn.Write(out)
+			}
 		} else {
-			conn.Write(out)
+			// Regular EXEC
+			cmdStr := cmd[5:]
+			if len(cmdStr) > 0 && cmdStr[len(cmdStr)-1] == '\n' {
+				cmdStr = cmdStr[:len(cmdStr)-1]
+			}
+
+			out, err := execShell(cmdStr)
+			if err != nil {
+				conn.Write([]byte(fmt.Sprintf("ERROR: %v\n%s", err, out)))
+			} else {
+				conn.Write(out)
+			}
 		}
 	}
+}
+
+func execShellWithStdin(cmdStr string, stdin []byte) ([]byte, error) {
+	shell := "/bin/bash"
+	if _, err := os.Stat("/bin/zsh"); err == nil {
+		shell = "/bin/zsh"
+	}
+	cmd := exec.Command(shell, "-c", cmdStr)
+
+	// Create stdin pipe
+	stdinPipe, err := cmd.StdinPipe()
+	if err != nil {
+		return nil, err
+	}
+
+	// Start command
+	var output []byte
+	outputCh := make(chan []byte)
+	go func() {
+		out, _ := cmd.CombinedOutput()
+		outputCh <- out
+	}()
+
+	// Write stdin and close
+	stdinPipe.Write(stdin)
+	stdinPipe.Close()
+
+	output = <-outputCh
+	return output, nil
 }
 
 func execShell(cmdStr string) ([]byte, error) {
@@ -251,6 +314,55 @@ func ExecCommand(host string, port int, secret, command string) (string, error) 
 		}
 		output = append(output, buf[:n]...)
 		// Reset deadline on successful read
+		conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	}
+
+	return string(output), nil
+}
+
+// ExecCommandWithStdin executes a command with stdin data
+func ExecCommandWithStdin(host string, port int, secret, command string, stdin []byte) (string, error) {
+	conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", host, port), 30*time.Second)
+	if err != nil {
+		return "", err
+	}
+	defer conn.Close()
+
+	// Auth
+	token := GenerateAuthToken(secret)
+	conn.Write([]byte(token + "\n"))
+
+	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	authBuf := make([]byte, 64)
+	n, err := conn.Read(authBuf)
+	if err != nil || n < 7 || string(authBuf[:7]) != "AUTH_OK" {
+		return "", fmt.Errorf("auth failed")
+	}
+
+	// Send EXEC_STDIN command with size
+	conn.Write([]byte(fmt.Sprintf("EXEC_STDIN %d %s\n", len(stdin), command)))
+
+	// Wait for READY
+	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	readyBuf := make([]byte, 64)
+	n, err = conn.Read(readyBuf)
+	if err != nil || n < 5 || string(readyBuf[:5]) != "READY" {
+		return "", fmt.Errorf("server not ready")
+	}
+
+	// Send stdin data
+	conn.Write(stdin)
+
+	// Read output
+	conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+	var output []byte
+	buf := make([]byte, 4096)
+	for {
+		n, err := conn.Read(buf)
+		if err != nil {
+			break
+		}
+		output = append(output, buf[:n]...)
 		conn.SetReadDeadline(time.Now().Add(5 * time.Second))
 	}
 

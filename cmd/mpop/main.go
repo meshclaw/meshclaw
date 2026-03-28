@@ -347,6 +347,52 @@ func cmdDetails(args []string) {
 		fmt.Printf("  %s(no monitored services)%s\n", common.Dim, common.Reset)
 	}
 	fmt.Println()
+
+	// Docker containers
+	fmt.Printf("  %s== Docker ==%s\n", common.Yellow, common.Reset)
+	dockerCmd := `docker ps --format "{{.Names}}: {{.Status}}" 2>/dev/null | head -10`
+	if out, err := mpop.RemoteExec(name, dockerCmd, timeout); err == nil && strings.TrimSpace(out) != "" {
+		for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+			if line != "" {
+				fmt.Printf("  %s\n", line)
+			}
+		}
+	} else {
+		fmt.Printf("  %s(no containers)%s\n", common.Dim, common.Reset)
+	}
+	fmt.Println()
+
+	// Listening ports
+	fmt.Printf("  %s== Listening Ports ==%s\n", common.Yellow, common.Reset)
+	portCmd := `ss -tlnp 2>/dev/null | grep LISTEN | awk '{print $4}' | sed 's/.*://' | sort -n | uniq | head -15 | tr '\n' ' ' || netstat -tlnp 2>/dev/null | grep LISTEN | awk '{print $4}' | sed 's/.*://' | sort -n | uniq | head -15 | tr '\n' ' '`
+	if out, err := mpop.RemoteExec(name, portCmd, timeout); err == nil && strings.TrimSpace(out) != "" {
+		fmt.Printf("  %s\n", strings.TrimSpace(out))
+	}
+	fmt.Println()
+
+	// GPU (if available)
+	gpuCmd := `nvidia-smi --query-gpu=name,memory.used,memory.total,utilization.gpu --format=csv,noheader 2>/dev/null | head -4`
+	if out, err := mpop.RemoteExec(name, gpuCmd, timeout); err == nil && strings.TrimSpace(out) != "" {
+		fmt.Printf("  %s== GPU ==%s\n", common.Yellow, common.Reset)
+		for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+			if line != "" {
+				fmt.Printf("  %s\n", line)
+			}
+		}
+		fmt.Println()
+	}
+
+	// Recent logins
+	fmt.Printf("  %s== Recent Logins ==%s\n", common.Yellow, common.Reset)
+	loginCmd := `last -n 5 2>/dev/null | head -5 | awk '{print $1" "$3" "$4" "$5" "$6}'`
+	if out, err := mpop.RemoteExec(name, loginCmd, timeout); err == nil && strings.TrimSpace(out) != "" {
+		for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+			if line != "" {
+				fmt.Printf("  %s\n", line)
+			}
+		}
+	}
+	fmt.Println()
 }
 
 func cmdConfig(args []string) {
