@@ -36,3 +36,4 @@ releases/
 wire
 wire-linux-*
 ssh-hosts.md
+vssh-mac
