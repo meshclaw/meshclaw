@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -12,26 +13,222 @@ import (
 
 // RelayConfig holds relay configuration
 type RelayConfig struct {
-	RelayNodeID   string // Node ID of relay
-	RelayVpnIP    string // VPN IP of relay
-	RelayPubKey   string // WireGuard public key of relay
-	RelayEndpoint string // Public endpoint of relay
+	RelayNodeID   string        // Node ID of relay
+	RelayVpnIP    string        // VPN IP of relay
+	RelayPubKey   string        // WireGuard public key of relay
+	RelayEndpoint string        // Public endpoint of relay
+	Latency       time.Duration // Measured latency to relay
 }
 
-// GetRelayNode finds the best relay node from peers (any node with public IP)
-func GetRelayNode(peers []Peer, myNodeID string) *RelayConfig {
-	// Find any node with public IP that can act as relay
+// RelayState tracks current relay and health
+type RelayState struct {
+	Current       *RelayConfig  // Currently selected relay
+	FailCount     int           // Consecutive failures
+	LastCheck     time.Time     // Last health check time
+	LastSuccess   time.Time     // Last successful connection
+}
+
+// Global relay state (per interface would be better, but simple for now)
+var currentRelayState = make(map[string]*RelayState) // key: network name
+
+// GetRelayState returns relay state for a network
+func GetRelayState(network string) *RelayState {
+	if state, ok := currentRelayState[network]; ok {
+		return state
+	}
+	state := &RelayState{}
+	currentRelayState[network] = state
+	return state
+}
+
+// IsRelayHealthy checks if current relay is still working
+// Uses WireGuard handshake time to verify actual connectivity
+func IsRelayHealthy(relay *RelayConfig, iface string) bool {
+	if relay == nil {
+		return false
+	}
+
+	// Check WireGuard handshake time for this peer
+	wg := common.FindBin("wg")
+	out, _, code := common.Run(wg, "show", iface, "latest-handshakes")
+	if code != 0 {
+		return false
+	}
+
+	// Parse output: "pubkey\ttimestamp\n"
+	lines := strings.Split(out, "\n")
+	for _, line := range lines {
+		parts := strings.Split(line, "\t")
+		if len(parts) != 2 {
+			continue
+		}
+		if parts[0] == relay.RelayPubKey {
+			ts, err := strconv.ParseInt(parts[1], 10, 64)
+			if err != nil {
+				return false
+			}
+			if ts == 0 {
+				// No handshake yet
+				return false
+			}
+			handshakeAge := time.Since(time.Unix(ts, 0))
+			// Healthy if handshake within last 2.5 minutes
+			return handshakeAge < 150*time.Second
+		}
+	}
+
+	return false
+}
+
+// SelectRelayWithStickiness selects relay with stickiness and failover
+func SelectRelayWithStickiness(candidates []RelayConfig, network, iface string) *RelayConfig {
+	state := GetRelayState(network)
+
+	// If we have a current relay, check if it's still healthy
+	if state.Current != nil {
+		// Don't check too frequently (every 15s max)
+		if time.Since(state.LastCheck) < 15*time.Second {
+			return state.Current
+		}
+
+		state.LastCheck = time.Now()
+
+		if IsRelayHealthy(state.Current, iface) {
+			state.FailCount = 0
+			state.LastSuccess = time.Now()
+			return state.Current
+		}
+
+		// Relay failed - switch immediately
+		fmt.Printf("  [relay] %s unhealthy, switching...\n", state.Current.RelayNodeID)
+		state.Current = nil
+		state.FailCount = 0
+	}
+
+	// No current relay or need to select new one
+	newRelay := SelectBestRelay(candidates)
+	if newRelay != nil {
+		fmt.Printf("  [relay] selected %s (%s) latency=%v\n",
+			newRelay.RelayNodeID, newRelay.RelayEndpoint, newRelay.Latency)
+		state.Current = newRelay
+		state.LastCheck = time.Now()
+		state.LastSuccess = time.Now()
+	}
+
+	return newRelay
+}
+
+// GetRelayCandidates returns all nodes that can act as relay
+// Only nodes with direct public IP (public_ip == lan_ip) can be relays
+// This excludes NAT clients that have public_ip but can't accept incoming
+func GetRelayCandidates(peers []Peer, myNodeID string) []RelayConfig {
+	var relays []RelayConfig
+
 	for _, p := range peers {
-		if p.NodeID != myNodeID && p.PublicIP != "" && p.WgPublicKey != "" {
-			return &RelayConfig{
-				RelayNodeID:   p.NodeID,
-				RelayVpnIP:    p.VpnIP,
-				RelayPubKey:   p.WgPublicKey,
-				RelayEndpoint: fmt.Sprintf("%s:%d", p.PublicIP, getPort(p)),
+		if p.NodeID == myNodeID {
+			continue
+		}
+		if p.PublicIP == "" || p.WgPublicKey == "" {
+			continue
+		}
+		// Only consider as relay if public_ip == lan_ip (direct public IP, not NAT)
+		if p.PublicIP != p.LanIP {
+			continue
+		}
+		relays = append(relays, RelayConfig{
+			RelayNodeID:   p.NodeID,
+			RelayVpnIP:    p.VpnIP,
+			RelayPubKey:   p.WgPublicKey,
+			RelayEndpoint: fmt.Sprintf("%s:%d", p.PublicIP, getPort(p)),
+			Latency:       0,
+		})
+	}
+
+	return relays
+}
+
+// MeasureLatency measures RTT to a relay endpoint
+func MeasureLatency(endpoint string) time.Duration {
+	host := strings.Split(endpoint, ":")[0]
+	start := time.Now()
+
+	conn, err := net.DialTimeout("udp", endpoint, 2*time.Second)
+	if err != nil {
+		// Try TCP as fallback
+		conn, err = net.DialTimeout("tcp", host+":22", 2*time.Second)
+		if err != nil {
+			return time.Hour // Very high latency means unreachable
+		}
+	}
+	conn.Close()
+
+	return time.Since(start)
+}
+
+// SelectBestRelay selects the best relay from candidates based on latency
+func SelectBestRelay(candidates []RelayConfig) *RelayConfig {
+	if len(candidates) == 0 {
+		return nil
+	}
+
+	// Measure latency for each candidate
+	for i := range candidates {
+		candidates[i].Latency = MeasureLatency(candidates[i].RelayEndpoint)
+	}
+
+	// Find best (lowest latency)
+	best := &candidates[0]
+	for i := 1; i < len(candidates); i++ {
+		if candidates[i].Latency < best.Latency {
+			best = &candidates[i]
+		}
+	}
+
+	// Only return if reachable (latency < 1 hour)
+	if best.Latency >= time.Hour {
+		return nil
+	}
+
+	return best
+}
+
+// SelectRelayWithFallback tries to select the best relay, with fallback to others
+func SelectRelayWithFallback(candidates []RelayConfig, testFn func(*RelayConfig) bool) *RelayConfig {
+	if len(candidates) == 0 {
+		return nil
+	}
+
+	// Measure latency and sort by it
+	for i := range candidates {
+		candidates[i].Latency = MeasureLatency(candidates[i].RelayEndpoint)
+	}
+
+	// Sort by latency (simple bubble sort, few candidates)
+	for i := 0; i < len(candidates)-1; i++ {
+		for j := i + 1; j < len(candidates); j++ {
+			if candidates[j].Latency < candidates[i].Latency {
+				candidates[i], candidates[j] = candidates[j], candidates[i]
 			}
 		}
 	}
+
+	// Try each relay in order of latency
+	for i := range candidates {
+		if candidates[i].Latency >= time.Hour {
+			continue // Skip unreachable
+		}
+		if testFn == nil || testFn(&candidates[i]) {
+			return &candidates[i]
+		}
+	}
+
 	return nil
+}
+
+// GetRelayNode finds the best relay node from peers (legacy, uses new logic)
+func GetRelayNode(peers []Peer, myNodeID string) *RelayConfig {
+	candidates := GetRelayCandidates(peers, myNodeID)
+	return SelectBestRelay(candidates)
 }
 
 func getPort(p Peer) int {

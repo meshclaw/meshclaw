@@ -353,19 +353,21 @@ func cmdInstall(joinURL, nodeName string) {
 
 	// Create systemd services
 	fmt.Println("  Creating systemd services...")
-	createSystemdServices(coordURL, nodeName, isFirstNode)
+	seedURL := ""
+	if !isFirstNode {
+		seedURL = coordURL // Use join URL as seed for gossip sync
+	}
+	createSystemdServices(coordURL, nodeName, seedURL)
 
 	// Configure firewall
 	configureFirewall()
 
-	// Start services
+	// Start services - ALL nodes run coordinator (distributed mesh)
 	fmt.Println("  Starting services...")
-	if isFirstNode {
-		runCmd("systemctl", "daemon-reload")
-		runCmd("systemctl", "enable", "wire-coordinator", "wire", "--quiet")
-		runCmd("systemctl", "start", "wire-coordinator")
-		time.Sleep(2 * time.Second)
-	}
+	runCmd("systemctl", "daemon-reload")
+	runCmd("systemctl", "enable", "wire-coordinator", "wire", "--quiet")
+	runCmd("systemctl", "start", "wire-coordinator")
+	time.Sleep(2 * time.Second)
 	runCmd("systemctl", "start", "wire")
 
 	// Wait for VPN to be ready
@@ -418,10 +420,29 @@ func testCoordinator(url string) bool {
 	return resp.StatusCode == 200
 }
 
-func createSystemdServices(coordURL, nodeName string, isCoordinator bool) {
-	// Wire coordinator service
-	if isCoordinator {
-		coordService := `[Unit]
+func createSystemdServices(coordURL, nodeName string, seedURL string) {
+	// Wire coordinator service - ALL nodes run coordinator (distributed mesh)
+	var coordService string
+	if seedURL != "" {
+		// Joining node - connect to seed for initial sync
+		coordService = fmt.Sprintf(`[Unit]
+Description=Wire Coordinator (Gossip)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+Environment=WIRE_SEED_URL=%s
+ExecStart=/usr/local/bin/wire coordinator
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+`, seedURL)
+	} else {
+		// First node - no seed
+		coordService = `[Unit]
 Description=Wire Coordinator (Gossip)
 After=network-online.target
 Wants=network-online.target
@@ -435,14 +456,14 @@ RestartSec=5
 [Install]
 WantedBy=multi-user.target
 `
-		os.WriteFile("/etc/systemd/system/wire-coordinator.service", []byte(coordService), 0644)
 	}
+	os.WriteFile("/etc/systemd/system/wire-coordinator.service", []byte(coordService), 0644)
 
-	// Wire VPN service
+	// Wire VPN service - always depends on local coordinator
 	wireService := fmt.Sprintf(`[Unit]
 Description=Wire VPN
-After=%s network-online.target
-Wants=network-online.target
+After=wire-coordinator.service network-online.target
+Wants=wire-coordinator.service network-online.target
 
 [Service]
 Type=simple
@@ -454,12 +475,7 @@ RestartSec=5
 
 [Install]
 WantedBy=multi-user.target
-`, func() string {
-		if isCoordinator {
-			return "wire-coordinator.service"
-		}
-		return ""
-	}(), coordURL, nodeName)
+`, coordURL, nodeName)
 	os.WriteFile("/etc/systemd/system/wire.service", []byte(wireService), 0644)
 
 	// Template service for additional networks

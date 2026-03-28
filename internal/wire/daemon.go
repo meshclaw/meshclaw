@@ -203,13 +203,147 @@ func SpawnDaemonForNetwork(network string) error {
 	return cmd.Start()
 }
 
+// SyncPeersForNetworkWithRelay syncs peers, with relay awareness
+func SyncPeersForNetworkWithRelay(iface, server, myNodeID, network string, iAmRelay bool) int {
+	peers, err := GetPeersForNetwork(server, network)
+	if err != nil {
+		return 0
+	}
+
+	// If I am a relay node, just add all peers directly with their VPN IPs
+	if iAmRelay {
+		count := 0
+		for _, p := range peers {
+			if p.NodeID == myNodeID {
+				continue
+			}
+			if p.WgPublicKey == "" || p.VpnIP == "" {
+				continue
+			}
+
+			// Determine endpoint
+			var endpoint string
+			port := p.Port
+			if port == 0 {
+				port = DefaultPort
+			}
+			natPort := p.NatPort
+			if natPort == 0 {
+				natPort = port
+			}
+
+			if p.PublicIP != "" {
+				endpoint = strings.TrimSpace(p.PublicIP) + ":" + strconv.Itoa(natPort)
+			}
+
+			// Add peer with their VPN IP in allowed-ips
+			AddPeer(iface, p.WgPublicKey, p.VpnIP, endpoint)
+			count++
+		}
+		return count
+	}
+
+	// Not a relay, use the regular sync with relay selection
+	return SyncPeersForNetwork(iface, server, myNodeID, network)
+}
+
 // SyncPeersForNetwork syncs peers from coordinator for a specific network
+// Uses relay for peers that are not directly reachable
 func SyncPeersForNetwork(iface, server, myNodeID, network string) int {
 	peers, err := GetPeersForNetwork(server, network)
 	if err != nil {
 		return 0
 	}
-	return SyncPeersToWireGuard(iface, peers, myNodeID)
+
+	// Get my info
+	var myPubIP string
+	for _, p := range peers {
+		if p.NodeID == myNodeID {
+			myPubIP = p.PublicIP
+			break
+		}
+	}
+
+	// Get relay candidates (nodes with public IP that we can reach)
+	candidates := GetRelayCandidates(peers, myNodeID)
+	// Use stickiness: keep current relay unless it fails
+	relay := SelectRelayWithStickiness(candidates, network, iface)
+
+	// Track peers that need relay
+	var relayedPeers []string
+
+	count := 0
+	for _, p := range peers {
+		if p.NodeID == myNodeID {
+			continue
+		}
+		if p.WgPublicKey == "" || p.VpnIP == "" {
+			continue
+		}
+
+		// Skip if this is a relay node (we handle it separately)
+		isRelayNode := false
+		for _, c := range candidates {
+			if c.RelayNodeID == p.NodeID {
+				isRelayNode = true
+				break
+			}
+		}
+
+		// Determine endpoint
+		var endpoint string
+		lanIP := p.LanIP
+		useLan := lanIP != "" && !strings.HasPrefix(lanIP, "127.") && myPubIP != "" && p.PublicIP == myPubIP
+
+		port := p.Port
+		if port == 0 {
+			port = DefaultPort
+		}
+		natPort := p.NatPort
+		if natPort == 0 {
+			natPort = port
+		}
+
+		// Check if peer is behind NAT (public_ip != lan_ip)
+		peerBehindNAT := p.PublicIP != "" && p.PublicIP != p.LanIP
+
+		if useLan {
+			// Same LAN, direct connection
+			endpoint = strings.TrimSpace(lanIP) + ":" + strconv.Itoa(port)
+			AddPeer(iface, p.WgPublicKey, p.VpnIP, endpoint)
+		} else if isRelayNode {
+			// This is a relay node (direct public IP), connect directly
+			endpoint = strings.TrimSpace(p.PublicIP) + ":" + strconv.Itoa(natPort)
+			AddPeer(iface, p.WgPublicKey, p.VpnIP, endpoint)
+		} else if peerBehindNAT {
+			// Peer is behind NAT, need relay
+			// Add peer for potential direct connection (NAT hole punching)
+			endpoint = strings.TrimSpace(p.PublicIP) + ":" + strconv.Itoa(natPort)
+			AddPeer(iface, p.WgPublicKey, p.VpnIP, endpoint)
+			// Also add to relay list
+			if relay != nil {
+				relayedPeers = append(relayedPeers, p.VpnIP)
+			}
+		} else if p.PublicIP != "" {
+			// Has direct public IP (not NAT), connect directly
+			endpoint = strings.TrimSpace(p.PublicIP) + ":" + strconv.Itoa(natPort)
+			AddPeer(iface, p.WgPublicKey, p.VpnIP, endpoint)
+		} else {
+			// No public IP, need relay
+			if relay != nil {
+				relayedPeers = append(relayedPeers, p.VpnIP)
+			}
+			AddPeer(iface, p.WgPublicKey, p.VpnIP, "")
+		}
+		count++
+	}
+
+	// Update relay's allowed-ips to include all relayed peers
+	if relay != nil && len(relayedPeers) > 0 {
+		UpdateRelayAllowedIPs(iface, relay.RelayPubKey, relay.RelayVpnIP, relayedPeers)
+	}
+
+	return count
 }
 
 // RunDaemonForNetwork runs the daemon loop for a specific network
@@ -241,7 +375,8 @@ func RunDaemonForNetwork(iface, server string, cfg *Config, nc *NetworkConfig, p
 		Register(server, regCfg, pubKey, lanIP, natPort)
 
 		// Sync peers for this network
-		SyncPeersForNetwork(iface, server, cfg.NodeID, network)
+		// If we're a relay, sync all peers with their VPN IPs
+		SyncPeersForNetworkWithRelay(iface, server, cfg.NodeID, network, isRelay)
 
 		time.Sleep(RefreshInterval * time.Second)
 	}

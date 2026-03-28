@@ -17,6 +17,16 @@ const (
 	CacheTTL    = 300 // 5 minutes
 )
 
+// PeerStats contains system stats reported by workers
+type PeerStats struct {
+	Load      string  `json:"load,omitempty"`
+	LoadValue float64 `json:"load_value,omitempty"`
+	MemPct    int     `json:"mem_pct,omitempty"`
+	DiskPct   int     `json:"disk_pct,omitempty"`
+	Uptime    string  `json:"uptime,omitempty"`
+	UpdatedAt int64   `json:"updated_at,omitempty"`
+}
+
 // Peer represents a network peer
 type Peer struct {
 	NodeID      string      `json:"node_id"`
@@ -28,11 +38,45 @@ type Peer struct {
 	Port        int         `json:"port"`
 	NatPort     int         `json:"nat_port"`
 	LastSeen    interface{} `json:"last_seen"`
+	Stats       *PeerStats  `json:"stats,omitempty"`
 }
 
 // PeersResponse from wire coordinator
 type PeersResponse struct {
 	Peers []Peer `json:"peers"`
+}
+
+// GetPeersWithStats fetches peers with stats from coordinator
+func GetPeersWithStats() ([]Peer, error) {
+	relays := GetRelays()
+	if len(relays) == 0 {
+		relays = getWireRelays()
+	}
+
+	for _, relayIP := range relays {
+		url := fmt.Sprintf("http://%s:%d/peers", relayIP, WireAPIPort)
+		client := &http.Client{Timeout: 5 * time.Second}
+
+		resp, err := client.Get(url)
+		if err != nil {
+			continue
+		}
+		defer resp.Body.Close()
+
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			continue
+		}
+
+		var result PeersResponse
+		if err := json.Unmarshal(body, &result); err != nil {
+			continue
+		}
+
+		return result.Peers, nil
+	}
+
+	return nil, fmt.Errorf("no coordinator available")
 }
 
 var (

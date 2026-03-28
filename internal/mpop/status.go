@@ -109,8 +109,16 @@ func GetServerStatus(name, ip string, timeout time.Duration) *ServerStatus {
 	return status
 }
 
-// GetAllServerStatus fetches status for all servers in parallel
+// GetAllServerStatus fetches status for all servers
+// Uses coordinator-cached stats (from workers) for instant results
 func GetAllServerStatus(timeout time.Duration) []*ServerStatus {
+	// Try to get stats from coordinator first (fast path)
+	peers, err := GetPeersWithStats()
+	if err == nil && len(peers) > 0 {
+		return peersToStatus(peers)
+	}
+
+	// Fallback to direct server query (slow path)
 	servers := GetServers()
 	if len(servers) == 0 {
 		return nil
@@ -140,6 +148,93 @@ func GetAllServerStatus(timeout time.Duration) []*ServerStatus {
 	}
 
 	wg.Wait()
+	return results
+}
+
+// peersToStatus converts coordinator peers to ServerStatus
+func peersToStatus(peers []Peer) []*ServerStatus {
+	now := time.Now().Unix()
+	// Use map to deduplicate and prefer entries with stats or newer LastSeen
+	bestPeer := make(map[string]*Peer)
+
+	for i := range peers {
+		p := &peers[i]
+		if p.NodeName == "" || p.VpnIP == "" {
+			continue
+		}
+
+		existing := bestPeer[p.NodeName]
+		if existing == nil {
+			bestPeer[p.NodeName] = p
+			continue
+		}
+
+		// Prefer peer with stats
+		hasStats := p.Stats != nil && p.Stats.UpdatedAt > 0
+		existingHasStats := existing.Stats != nil && existing.Stats.UpdatedAt > 0
+
+		if hasStats && !existingHasStats {
+			bestPeer[p.NodeName] = p
+		} else if hasStats && existingHasStats && p.Stats.UpdatedAt > existing.Stats.UpdatedAt {
+			bestPeer[p.NodeName] = p
+		} else if !hasStats && !existingHasStats {
+			// Neither has stats - prefer newer LastSeen
+			var pTime, eTime int64
+			switch v := p.LastSeen.(type) {
+			case float64:
+				pTime = int64(v)
+			case int64:
+				pTime = v
+			}
+			switch v := existing.LastSeen.(type) {
+			case float64:
+				eTime = int64(v)
+			case int64:
+				eTime = v
+			}
+			if pTime > eTime {
+				bestPeer[p.NodeName] = p
+			}
+		}
+	}
+
+	var results []*ServerStatus
+	for _, p := range bestPeer {
+		// Check if online (last seen within 90 seconds)
+		var lastSeenTime int64
+		switch v := p.LastSeen.(type) {
+		case float64:
+			lastSeenTime = int64(v)
+		case int64:
+			lastSeenTime = v
+		}
+		online := lastSeenTime > 0 && now-lastSeenTime < 90
+
+		status := &ServerStatus{
+			Name:   p.NodeName,
+			IP:     p.VpnIP,
+			Online: online,
+		}
+
+		// Use cached stats if available
+		if p.Stats != nil && p.Stats.UpdatedAt > 0 && now-p.Stats.UpdatedAt < 120 {
+			status.Load = p.Stats.Load
+			status.LoadValue = p.Stats.LoadValue
+			status.MemPct = p.Stats.MemPct
+			status.Memory = fmt.Sprintf("%d%%", p.Stats.MemPct)
+			status.DiskPct = p.Stats.DiskPct
+			status.Disk = fmt.Sprintf("%d%%", p.Stats.DiskPct)
+			status.Uptime = p.Stats.Uptime
+		}
+
+		results = append(results, status)
+	}
+
+	// Sort by name
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].Name < results[j].Name
+	})
+
 	return results
 }
 

@@ -33,3 +33,6 @@ dist/
 build/
 *.egg
 releases/
+wire
+wire-linux-*
+ssh-hosts.md

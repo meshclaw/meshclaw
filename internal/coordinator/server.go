@@ -30,18 +30,29 @@ type Network struct {
 	CreatedAt int64  `json:"created_at"`
 }
 
+// PeerStats contains system stats reported by workers
+type PeerStats struct {
+	Load      string  `json:"load,omitempty"`
+	LoadValue float64 `json:"load_value,omitempty"`
+	MemPct    int     `json:"mem_pct,omitempty"`
+	DiskPct   int     `json:"disk_pct,omitempty"`
+	Uptime    string  `json:"uptime,omitempty"`
+	UpdatedAt int64   `json:"updated_at,omitempty"`
+}
+
 // Peer represents a registered peer
 type Peer struct {
-	Network     string `json:"network"`
-	NodeID      string `json:"node_id"`
-	NodeName    string `json:"node_name"`
-	WgPublicKey string `json:"wg_public_key"`
-	PublicIP    string `json:"public_ip"`
-	LanIP       string `json:"lan_ip"`
-	VpnIP       string `json:"vpn_ip"`
-	Port        int    `json:"port"`
-	NatPort     int    `json:"nat_port"`
-	LastSeen    int64  `json:"last_seen"`
+	Network     string     `json:"network"`
+	NodeID      string     `json:"node_id"`
+	NodeName    string     `json:"node_name"`
+	WgPublicKey string     `json:"wg_public_key"`
+	PublicIP    string     `json:"public_ip"`
+	LanIP       string     `json:"lan_ip"`
+	VpnIP       string     `json:"vpn_ip"`
+	Port        int        `json:"port"`
+	NatPort     int        `json:"nat_port"`
+	LastSeen    int64      `json:"last_seen"`
+	Stats       *PeerStats `json:"stats,omitempty"`
 }
 
 // Server is the coordinator server
@@ -99,6 +110,7 @@ func (s *Server) Run() error {
 	// Peer management (with network support)
 	mux.HandleFunc("/peers", s.handlePeers)
 	mux.HandleFunc("/register", s.handleRegister)
+	mux.HandleFunc("/stats", s.handleStats)
 	mux.HandleFunc("/sync", s.handleSync)
 
 	// Utility
@@ -107,6 +119,15 @@ func (s *Server) Run() error {
 	mux.HandleFunc("/bin/wire", s.handleBinary("wire"))
 	mux.HandleFunc("/bin/vssh", s.handleBinary("vssh"))
 
+	// Initial sync from seed if joining existing cluster
+	if seedURL := os.Getenv("WIRE_SEED_URL"); seedURL != "" {
+		fmt.Printf("  Syncing from seed: %s\n", seedURL)
+		go func() {
+			time.Sleep(2 * time.Second)
+			s.syncFromSeed(seedURL)
+		}()
+	}
+
 	// Start gossip loop
 	go s.gossipLoop()
 
@@ -114,6 +135,28 @@ func (s *Server) Run() error {
 	fmt.Printf("Coordinator listening on %s (multi-network, gossip enabled)\n", addr)
 	fmt.Printf("  Install: curl -sL http://<this-ip>:%d/install.sh | bash\n", s.port)
 	return http.ListenAndServe(addr, mux)
+}
+
+// syncFromSeed fetches initial peers from seed coordinator
+func (s *Server) syncFromSeed(seedURL string) {
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Get(seedURL + "/peers")
+	if err != nil {
+		fmt.Printf("  Seed sync failed: %v\n", err)
+		return
+	}
+	defer resp.Body.Close()
+
+	var result struct {
+		Peers []*Peer `json:"peers"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		fmt.Printf("  Seed sync decode failed: %v\n", err)
+		return
+	}
+
+	s.mergeData(nil, result.Peers)
+	fmt.Printf("  Synced %d peers from seed\n", len(result.Peers))
 }
 
 // handleNetworks lists all networks
@@ -297,6 +340,58 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleStats receives stats from workers
+func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		Network   string  `json:"network"`
+		NodeID    string  `json:"node_id"`
+		Load      string  `json:"load"`
+		LoadValue float64 `json:"load_value"`
+		MemPct    int     `json:"mem_pct"`
+		DiskPct   int     `json:"disk_pct"`
+		Uptime    string  `json:"uptime"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid json")
+		return
+	}
+
+	if req.NodeID == "" {
+		jsonError(w, "node_id required")
+		return
+	}
+
+	network := req.Network
+	if network == "" {
+		network = DefaultNetwork
+	}
+
+	s.mu.Lock()
+	if peers, ok := s.peers[network]; ok {
+		if peer, ok := peers[req.NodeID]; ok {
+			peer.Stats = &PeerStats{
+				Load:      req.Load,
+				LoadValue: req.LoadValue,
+				MemPct:    req.MemPct,
+				DiskPct:   req.DiskPct,
+				Uptime:    req.Uptime,
+				UpdatedAt: time.Now().Unix(),
+			}
+			peer.LastSeen = time.Now().Unix()
+		}
+	}
+	s.mu.Unlock()
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]bool{"ok": true})
+}
+
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	s.mu.RLock()
 	totalPeers := 0
@@ -374,7 +469,15 @@ func (s *Server) mergeData(networks []*Network, peers []*Peer) int {
 		}
 		existing, exists := s.peers[p.Network][p.NodeID]
 		if !exists || p.LastSeen > existing.LastSeen {
+			// Preserve newer stats when merging
+			if exists && existing.Stats != nil && (p.Stats == nil || (existing.Stats.UpdatedAt > p.Stats.UpdatedAt)) {
+				p.Stats = existing.Stats
+			}
 			s.peers[p.Network][p.NodeID] = p
+			updated++
+		} else if exists && p.Stats != nil && (existing.Stats == nil || p.Stats.UpdatedAt > existing.Stats.UpdatedAt) {
+			// Update stats even if peer info hasn't changed
+			existing.Stats = p.Stats
 			updated++
 		}
 	}
