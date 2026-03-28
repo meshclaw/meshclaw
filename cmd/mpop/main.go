@@ -52,6 +52,7 @@ func main() {
 		"exec":      cmdExec,
 		"servers":   cmdServers,
 		"info":      cmdInfo,
+		"details":   cmdDetails,
 		"config":    cmdConfig,
 		"init":      cmdInit,
 		"vpn":       cmdVPN,
@@ -236,6 +237,114 @@ func cmdInfo(args []string) {
 	}
 	if status.Role != "" {
 		fmt.Printf("  Role:    %s\n", status.Role)
+	}
+	fmt.Println()
+}
+
+func cmdDetails(args []string) {
+	if len(args) < 1 {
+		fmt.Println("Usage: mpop details <server>")
+		os.Exit(1)
+	}
+
+	name := args[0]
+	servers := mpop.GetServers()
+	ip, ok := servers[name]
+	if !ok {
+		fmt.Printf("Server not found: %s\n", name)
+		os.Exit(1)
+	}
+
+	timeout := 15 * time.Second
+
+	fmt.Println()
+	fmt.Printf("  %s%s%s (%s)\n", common.Cyan, name, common.Reset, ip)
+	fmt.Println()
+
+	// System info
+	fmt.Printf("  %s== System ==%s\n", common.Yellow, common.Reset)
+	sysCmd := `hostname -f 2>/dev/null || hostname; uname -sr; cat /etc/os-release 2>/dev/null | grep -E "^(PRETTY_NAME|VERSION_ID)" | head -2 | cut -d= -f2 | tr -d '"' || sw_vers 2>/dev/null | grep -E "ProductName|ProductVersion" | awk '{print $2,$3}'`
+	if out, err := mpop.RemoteExec(name, sysCmd, timeout); err == nil {
+		for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+			if line != "" {
+				fmt.Printf("  %s\n", line)
+			}
+		}
+	}
+	fmt.Println()
+
+	// CPU
+	fmt.Printf("  %s== CPU ==%s\n", common.Yellow, common.Reset)
+	cpuCmd := `nproc 2>/dev/null || sysctl -n hw.ncpu; cat /proc/loadavg 2>/dev/null | awk '{print "Load: "$1" "$2" "$3}' || sysctl -n vm.loadavg 2>/dev/null | tr -d '{}' | awk '{print "Load: "$1" "$2" "$3}'`
+	if out, err := mpop.RemoteExec(name, cpuCmd, timeout); err == nil {
+		lines := strings.Split(strings.TrimSpace(out), "\n")
+		if len(lines) >= 1 {
+			fmt.Printf("  Cores: %s\n", lines[0])
+		}
+		if len(lines) >= 2 {
+			fmt.Printf("  %s\n", lines[1])
+		}
+	}
+	fmt.Println()
+
+	// Memory
+	fmt.Printf("  %s== Memory ==%s\n", common.Yellow, common.Reset)
+	memCmd := `free -h 2>/dev/null | grep -E "Mem|Swap" || vm_stat 2>/dev/null | head -5`
+	if out, err := mpop.RemoteExec(name, memCmd, timeout); err == nil {
+		for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+			fmt.Printf("  %s\n", line)
+		}
+	}
+	fmt.Println()
+
+	// Disk
+	fmt.Printf("  %s== Disk ==%s\n", common.Yellow, common.Reset)
+	diskCmd := `df -h / /home 2>/dev/null | grep -v "^Filesystem" | awk '{print $6": "$3"/"$2" ("$5")"}'`
+	if out, err := mpop.RemoteExec(name, diskCmd, timeout); err == nil {
+		for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+			if line != "" {
+				fmt.Printf("  %s\n", line)
+			}
+		}
+	}
+	fmt.Println()
+
+	// Network
+	fmt.Printf("  %s== Network ==%s\n", common.Yellow, common.Reset)
+	netCmd := `ip -4 addr show 2>/dev/null | grep inet | grep -v "127.0.0.1" | awk '{print $NF": "$2}' || ifconfig 2>/dev/null | grep -E "^[a-z]|inet " | grep -B1 "inet " | grep -v "127.0.0.1" | paste - - | awk '{print $1" "$6}'`
+	if out, err := mpop.RemoteExec(name, netCmd, timeout); err == nil {
+		for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+			if line != "" {
+				fmt.Printf("  %s\n", line)
+			}
+		}
+	}
+	fmt.Println()
+
+	// Top processes
+	fmt.Printf("  %s== Top Processes ==%s\n", common.Yellow, common.Reset)
+	procCmd := `ps aux --sort=-%cpu 2>/dev/null | head -6 | tail -5 | awk '{printf "%-6s %-5s %-5s %s\n", $1, $3"%", $4"%", $11}' || ps aux -r 2>/dev/null | head -6 | tail -5 | awk '{printf "%-6s %-5s %-5s %s\n", $1, $3"%", $4"%", $11}'`
+	if out, err := mpop.RemoteExec(name, procCmd, timeout); err == nil {
+		fmt.Printf("  %sUSER   CPU   MEM   CMD%s\n", common.Dim, common.Reset)
+		for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+			if line != "" {
+				fmt.Printf("  %s\n", line)
+			}
+		}
+	}
+	fmt.Println()
+
+	// Services
+	fmt.Printf("  %s== Services ==%s\n", common.Yellow, common.Reset)
+	svcCmd := `systemctl list-units --type=service --state=running 2>/dev/null | grep -E "wire|vssh|worker|docker|nginx|mysql|postgres|redis|mongo" | awk '{print $1": "$4}' | head -10 || launchctl list 2>/dev/null | grep -E "meshclaw|wire|vssh" | awk '{print $3": running"}'`
+	if out, err := mpop.RemoteExec(name, svcCmd, timeout); err == nil && strings.TrimSpace(out) != "" {
+		for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+			if line != "" {
+				fmt.Printf("  %s\n", line)
+			}
+		}
+	} else {
+		fmt.Printf("  %s(no monitored services)%s\n", common.Dim, common.Reset)
 	}
 	fmt.Println()
 }

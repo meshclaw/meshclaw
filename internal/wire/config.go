@@ -55,8 +55,20 @@ func ConfigPath() string {
 
 // LoadConfig loads wire configuration
 func LoadConfig() (*Config, error) {
-	path := ConfigPath()
-	data, err := os.ReadFile(path)
+	// Try user config first, then system config
+	paths := []string{
+		filepath.Join(common.WireDir(), "config.json"),
+		"/etc/wire/config.json",
+	}
+
+	var data []byte
+	var err error
+	for _, path := range paths {
+		data, err = os.ReadFile(path)
+		if err == nil {
+			break
+		}
+	}
 	if err != nil {
 		return nil, err
 	}

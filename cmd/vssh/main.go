@@ -231,55 +231,56 @@ func testVssh(host string, port int, secret string) bool {
 
 func cmdConnect(hostname string) {
 	cfg, err := wire.LoadConfig()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "wire not configured")
-		os.Exit(1)
-	}
-
-	// Get secret
 	secret := vssh.GetSecret()
-	if secret == "" {
-		fmt.Fprintln(os.Stderr, "No VSSH_SECRET or WIRE_SERVER_URL configured")
-		os.Exit(1)
-	}
 
-	// Find peer by hostname
-	peers, err := wire.GetPeers(cfg.ServerURL)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to get peers: %v\n", err)
-		os.Exit(1)
-	}
-
-	var targetIP string
-	for _, p := range peers {
-		if p.NodeName == hostname || strings.HasPrefix(p.NodeName, hostname) {
-			if p.NodeID == cfg.NodeID {
-				targetIP = "127.0.0.1"
-			} else {
-				targetIP = p.VpnIP
+	// Try wire mesh first if configured
+	if err == nil && secret != "" {
+		peers, peerErr := wire.GetPeers(cfg.ServerURL)
+		if peerErr == nil {
+			var targetIP string
+			for _, p := range peers {
+				if p.NodeName == hostname || strings.HasPrefix(p.NodeName, hostname) {
+					if p.NodeID == cfg.NodeID {
+						targetIP = "127.0.0.1"
+					} else {
+						targetIP = p.VpnIP
+					}
+					break
+				}
 			}
-			break
+
+			if targetIP != "" {
+				port := vssh.DefaultPort
+				fmt.Printf("Connecting to %s:%d...\n", targetIP, port)
+				if err := vssh.Connect(targetIP, port, secret); err == nil {
+					return
+				}
+				fmt.Printf("vssh protocol failed, trying SSH fallback...\n")
+			}
 		}
 	}
 
-	if targetIP == "" {
-		// Try as direct IP
-		if strings.Contains(hostname, ".") {
-			targetIP = hostname
-		} else {
-			fmt.Fprintf(os.Stderr, "Host not found: %s\n", hostname)
+	// Try direct IP with vssh protocol
+	if strings.Contains(hostname, ".") && secret != "" {
+		fmt.Printf("Connecting to %s:%d...\n", hostname, vssh.DefaultPort)
+		if err := vssh.Connect(hostname, vssh.DefaultPort, secret); err == nil {
+			return
+		}
+	}
+
+	// Fallback to SSH using ~/.ssh/config
+	sshCfg := vssh.GetSSHConfig(hostname)
+	if sshCfg != nil {
+		fmt.Printf("Using SSH config for %s\n", hostname)
+		if err := vssh.ConnectSSH(hostname); err != nil {
+			fmt.Fprintf(os.Stderr, "SSH connection failed: %v\n", err)
 			os.Exit(1)
 		}
+		return
 	}
 
-	port := vssh.DefaultPort
-
-	// Connect
-	fmt.Printf("Connecting to %s:%d...\n", targetIP, port)
-	if err := vssh.Connect(targetIP, port, secret); err != nil {
-		fmt.Fprintf(os.Stderr, "Connection failed: %v\n", err)
-		os.Exit(1)
-	}
+	fmt.Fprintf(os.Stderr, "Host not found in wire mesh or SSH config: %s\n", hostname)
+	os.Exit(1)
 }
 
 // resolveHost resolves hostname to VPN IP
@@ -382,7 +383,6 @@ func cmdExec(hostname string, command []string) {
 	// Check if local
 	cfg, _ := wire.LoadConfig()
 	if hostname == "localhost" || hostname == "local" || hostname == cfg.NodeName {
-		// Run locally
 		result, err := vssh.ExecLocal(cmd)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -393,13 +393,9 @@ func cmdExec(hostname string, command []string) {
 	}
 
 	targetIP, err := resolveHost(hostname)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
 
 	// If resolved to localhost, run locally
-	if targetIP == "127.0.0.1" {
+	if err == nil && targetIP == "127.0.0.1" {
 		result, err := vssh.ExecLocal(cmd)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -409,17 +405,28 @@ func cmdExec(hostname string, command []string) {
 		return
 	}
 
+	// Try vssh protocol first
 	secret := vssh.GetSecret()
-	if secret == "" {
-		fmt.Fprintln(os.Stderr, "No secret configured")
-		os.Exit(1)
+	if err == nil && secret != "" {
+		result, execErr := vssh.ExecCommand(targetIP, vssh.DefaultPort, secret, cmd)
+		if execErr == nil {
+			fmt.Print(result)
+			return
+		}
 	}
 
-	// Execute (wire handles relay at VPN level)
-	result, err := vssh.ExecCommand(targetIP, vssh.DefaultPort, secret, cmd)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+	// Fallback to SSH
+	sshCfg := vssh.GetSSHConfig(hostname)
+	if sshCfg != nil {
+		result, err := vssh.ExecSSH(hostname, cmd)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "SSH exec failed: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Print(result)
+		return
 	}
-	fmt.Print(result)
+
+	fmt.Fprintf(os.Stderr, "Host not found: %s\n", hostname)
+	os.Exit(1)
 }

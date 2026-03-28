@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/meshclaw/meshclaw/internal/wire"
 )
 
 const (
@@ -48,6 +50,15 @@ type PeersResponse struct {
 
 // GetPeersWithStats fetches peers with stats from coordinator
 func GetPeersWithStats() ([]Peer, error) {
+	// Try wire config first
+	wireCfg, err := wire.LoadConfig()
+	if err == nil && wireCfg.ServerURL != "" {
+		if peers, err := fetchPeersWithStatsFromURL(wireCfg.ServerURL + "/peers"); err == nil {
+			return peers, nil
+		}
+	}
+
+	// Fallback to mpop config relays
 	relays := GetRelays()
 	if len(relays) == 0 {
 		relays = getWireRelays()
@@ -55,28 +66,34 @@ func GetPeersWithStats() ([]Peer, error) {
 
 	for _, relayIP := range relays {
 		url := fmt.Sprintf("http://%s:%d/peers", relayIP, WireAPIPort)
-		client := &http.Client{Timeout: 5 * time.Second}
-
-		resp, err := client.Get(url)
-		if err != nil {
-			continue
+		if peers, err := fetchPeersWithStatsFromURL(url); err == nil {
+			return peers, nil
 		}
-		defer resp.Body.Close()
-
-		body, err := io.ReadAll(resp.Body)
-		if err != nil {
-			continue
-		}
-
-		var result PeersResponse
-		if err := json.Unmarshal(body, &result); err != nil {
-			continue
-		}
-
-		return result.Peers, nil
 	}
 
 	return nil, fmt.Errorf("no coordinator available")
+}
+
+func fetchPeersWithStatsFromURL(url string) ([]Peer, error) {
+	client := &http.Client{Timeout: 5 * time.Second}
+
+	resp, err := client.Get(url)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	var result PeersResponse
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, err
+	}
+
+	return result.Peers, nil
 }
 
 var (
@@ -131,50 +148,63 @@ func GetServers() map[string]string {
 }
 
 func fetchWirePeers() map[string]string {
+	// Try wire config first (most reliable)
+	wireCfg, err := wire.LoadConfig()
+	if err == nil && wireCfg.ServerURL != "" {
+		if servers := fetchPeersFromURL(wireCfg.ServerURL + "/peers"); servers != nil {
+			return servers
+		}
+	}
+
+	// Fallback to mpop config relays
 	relays := GetRelays()
 	if len(relays) == 0 {
-		// Try wire config
 		relays = getWireRelays()
 	}
 
 	for _, relayIP := range relays {
 		url := fmt.Sprintf("http://%s:%d/peers", relayIP, WireAPIPort)
-		client := &http.Client{Timeout: 5 * time.Second}
-
-		resp, err := client.Get(url)
-		if err != nil {
-			continue
+		if servers := fetchPeersFromURL(url); servers != nil {
+			return servers
 		}
-		defer resp.Body.Close()
-
-		body, err := io.ReadAll(resp.Body)
-		if err != nil {
-			continue
-		}
-
-		var result PeersResponse
-		if err := json.Unmarshal(body, &result); err != nil {
-			continue
-		}
-
-		servers := make(map[string]string)
-		for _, peer := range result.Peers {
-			name := peer.NodeName
-			if name == "" {
-				// Use last octet as fallback
-				parts := strings.Split(peer.VpnIP, ".")
-				if len(parts) == 4 {
-					name = fmt.Sprintf("node-%s", parts[3])
-				}
-			}
-			if name != "" && peer.VpnIP != "" {
-				servers[name] = peer.VpnIP
-			}
-		}
-		return servers
 	}
 
 	return nil
+}
+
+func fetchPeersFromURL(url string) map[string]string {
+	client := &http.Client{Timeout: 5 * time.Second}
+
+	resp, err := client.Get(url)
+	if err != nil {
+		return nil
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil
+	}
+
+	var result PeersResponse
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil
+	}
+
+	servers := make(map[string]string)
+	for _, peer := range result.Peers {
+		name := peer.NodeName
+		if name == "" {
+			parts := strings.Split(peer.VpnIP, ".")
+			if len(parts) == 4 {
+				name = fmt.Sprintf("node-%s", parts[3])
+			}
+		}
+		if name != "" && peer.VpnIP != "" {
+			servers[name] = peer.VpnIP
+		}
+	}
+	return servers
 }
 
 func getWireRelays() []string {
