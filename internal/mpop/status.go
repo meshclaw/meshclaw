@@ -266,10 +266,10 @@ func PrintDashboard(statuses []*ServerStatus) {
 		}
 
 		if s.Online {
-			dot = Green + "*" + Reset
+			dot = Green + "●" + Reset
 			onlineCount++
 		} else {
-			dot = Red + "o" + Reset
+			dot = Red + "○" + Reset
 		}
 
 		load := fmt.Sprintf("%5s", "-")

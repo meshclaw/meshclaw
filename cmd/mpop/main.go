@@ -608,11 +608,11 @@ func cmdDeploy(args []string) {
 		go func(n, addr string) {
 			defer wg.Done()
 
-			// Detect architecture
+			// Detect architecture (use IP directly, not name lookup)
 			archCmd := "uname -m"
-			arch, err := mpop.RemoteExec(n, archCmd, 5*time.Second)
+			arch, err := mpop.VsshExec(addr, archCmd, 5*time.Second)
 			if err != nil {
-				results <- fmt.Sprintf("%s: failed to detect arch", n)
+				results <- fmt.Sprintf("%s: failed (%s)", n, err)
 				return
 			}
 			arch = strings.TrimSpace(arch)
@@ -623,19 +623,29 @@ func cmdDeploy(args []string) {
 			}
 
 			// Deploy each binary
+			var failed []string
 			for _, bin := range binaries {
 				localPath := fmt.Sprintf("bin/%s%s", bin, suffix)
+				tempPath := fmt.Sprintf("/tmp/%s.new", bin)
 				remotePath := fmt.Sprintf("/usr/local/bin/%s", bin)
 
-				if err := mpop.VsshPut(addr, localPath, remotePath); err != nil {
-					results <- fmt.Sprintf("%s: %s failed - %v", n, bin, err)
+				// Upload to temp, then mv (avoids "text file busy")
+				if err := mpop.VsshPut(addr, localPath, tempPath); err != nil {
+					failed = append(failed, fmt.Sprintf("%s:%v", bin, err))
 					continue
 				}
 
-				// chmod
-				mpop.VsshExec(addr, fmt.Sprintf("chmod +x %s", remotePath), 5*time.Second)
+				// mv and chmod
+				mvCmd := fmt.Sprintf("mv %s %s && chmod +x %s", tempPath, remotePath, remotePath)
+				if _, err := mpop.VsshExec(addr, mvCmd, 5*time.Second); err != nil {
+					failed = append(failed, fmt.Sprintf("%s:mv failed", bin))
+				}
 			}
-			results <- fmt.Sprintf("%s: OK", n)
+			if len(failed) > 0 {
+				results <- fmt.Sprintf("%s: %v", n, failed)
+			} else {
+				results <- fmt.Sprintf("%s: OK", n)
+			}
 		}(name, ip)
 	}
 

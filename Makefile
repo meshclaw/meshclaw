@@ -2,7 +2,7 @@
 
 VERSION := 1.0.0
 LDFLAGS := -s -w
-BINARIES := wire vssh mpop meshclaw meshdb vault
+BINARIES := wire vssh mpop worker meshclaw meshdb vault
 
 # Default target
 all: build

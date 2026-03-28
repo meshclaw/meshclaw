@@ -38,6 +38,30 @@ type PeerStats struct {
 	DiskPct   int     `json:"disk_pct,omitempty"`
 	Uptime    string  `json:"uptime,omitempty"`
 	UpdatedAt int64   `json:"updated_at,omitempty"`
+
+	// Extended stats from worker
+	Hostname    string `json:"hostname,omitempty"`
+	OS          string `json:"os,omitempty"`
+	Arch        string `json:"arch,omitempty"`
+	CPUCores    int    `json:"cpu_cores,omitempty"`
+	CPUPct      int    `json:"cpu_pct,omitempty"`
+	MemTotal    int64  `json:"mem_total,omitempty"`
+	MemUsed     int64  `json:"mem_used,omitempty"`
+	SwapTotal   int64  `json:"swap_total,omitempty"`
+	SwapUsed    int64  `json:"swap_used,omitempty"`
+	DiskTotal   int64  `json:"disk_total,omitempty"`
+	DiskUsed    int64  `json:"disk_used,omitempty"`
+	NetRX       int64  `json:"net_rx,omitempty"`
+	NetTX       int64  `json:"net_tx,omitempty"`
+	Procs       int    `json:"procs,omitempty"`
+	Connections int    `json:"connections,omitempty"`
+	DockerCount int    `json:"docker_count,omitempty"`
+	GPUCount    int    `json:"gpu_count,omitempty"`
+	GPUMemUsed  int    `json:"gpu_mem_used,omitempty"`
+	GPUMemTotal int    `json:"gpu_mem_total,omitempty"`
+	GPUUtil     int    `json:"gpu_util,omitempty"`
+	IOWait      int    `json:"io_wait,omitempty"`
+	TopProcess  string `json:"top_process,omitempty"`
 }
 
 // Peer represents a registered peer
@@ -348,13 +372,35 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Network   string  `json:"network"`
-		NodeID    string  `json:"node_id"`
-		Load      string  `json:"load"`
-		LoadValue float64 `json:"load_value"`
-		MemPct    int     `json:"mem_pct"`
-		DiskPct   int     `json:"disk_pct"`
-		Uptime    string  `json:"uptime"`
+		Network     string  `json:"network"`
+		NodeID      string  `json:"node_id"`
+		Load        string  `json:"load"`
+		LoadValue   float64 `json:"load_value"`
+		MemPct      int     `json:"mem_pct"`
+		DiskPct     int     `json:"disk_pct"`
+		Uptime      string  `json:"uptime"`
+		Hostname    string  `json:"hostname"`
+		OS          string  `json:"os"`
+		Arch        string  `json:"arch"`
+		CPUCores    int     `json:"cpu_cores"`
+		CPUPct      int     `json:"cpu_pct"`
+		MemTotal    int64   `json:"mem_total"`
+		MemUsed     int64   `json:"mem_used"`
+		SwapTotal   int64   `json:"swap_total"`
+		SwapUsed    int64   `json:"swap_used"`
+		DiskTotal   int64   `json:"disk_total"`
+		DiskUsed    int64   `json:"disk_used"`
+		NetRX       int64   `json:"net_rx"`
+		NetTX       int64   `json:"net_tx"`
+		Procs       int     `json:"procs"`
+		Connections int     `json:"connections"`
+		DockerCount int     `json:"docker_count"`
+		GPUCount    int     `json:"gpu_count"`
+		GPUMemUsed  int     `json:"gpu_mem_used"`
+		GPUMemTotal int     `json:"gpu_mem_total"`
+		GPUUtil     int     `json:"gpu_util"`
+		IOWait      int     `json:"io_wait"`
+		TopProcess  string  `json:"top_process"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -376,12 +422,34 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 	if peers, ok := s.peers[network]; ok {
 		if peer, ok := peers[req.NodeID]; ok {
 			peer.Stats = &PeerStats{
-				Load:      req.Load,
-				LoadValue: req.LoadValue,
-				MemPct:    req.MemPct,
-				DiskPct:   req.DiskPct,
-				Uptime:    req.Uptime,
-				UpdatedAt: time.Now().Unix(),
+				Load:        req.Load,
+				LoadValue:   req.LoadValue,
+				MemPct:      req.MemPct,
+				DiskPct:     req.DiskPct,
+				Uptime:      req.Uptime,
+				UpdatedAt:   time.Now().Unix(),
+				Hostname:    req.Hostname,
+				OS:          req.OS,
+				Arch:        req.Arch,
+				CPUCores:    req.CPUCores,
+				CPUPct:      req.CPUPct,
+				MemTotal:    req.MemTotal,
+				MemUsed:     req.MemUsed,
+				SwapTotal:   req.SwapTotal,
+				SwapUsed:    req.SwapUsed,
+				DiskTotal:   req.DiskTotal,
+				DiskUsed:    req.DiskUsed,
+				NetRX:       req.NetRX,
+				NetTX:       req.NetTX,
+				Procs:       req.Procs,
+				Connections: req.Connections,
+				DockerCount: req.DockerCount,
+				GPUCount:    req.GPUCount,
+				GPUMemUsed:  req.GPUMemUsed,
+				GPUMemTotal: req.GPUMemTotal,
+				GPUUtil:     req.GPUUtil,
+				IOWait:      req.IOWait,
+				TopProcess:  req.TopProcess,
 			}
 			peer.LastSeen = time.Now().Unix()
 		}
