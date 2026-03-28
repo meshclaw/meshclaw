@@ -261,9 +261,10 @@ func cmdAsk(args []string) {
 }
 
 func cmdChat(args []string) {
+	// No args = system shell
 	if len(args) < 1 {
-		fmt.Println("Usage: meshclaw chat <name>")
-		os.Exit(1)
+		meshclaw.RunShell()
+		return
 	}
 
 	name := args[0]
