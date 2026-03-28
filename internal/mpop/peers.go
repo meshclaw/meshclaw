@@ -88,11 +88,14 @@ func GetPeerStats(name string) (*Peer, error) {
 
 // GetPeersWithStats fetches peers with stats from coordinator
 func GetPeersWithStats() ([]Peer, error) {
-	// Try wire config first
+	// Try wire config with failover
 	wireCfg, err := wire.LoadConfig()
-	if err == nil && wireCfg.ServerURL != "" {
-		if peers, err := fetchPeersWithStatsFromURL(wireCfg.ServerURL + "/peers"); err == nil {
-			return peers, nil
+	if err == nil {
+		// Try all coordinator URLs (primary + backups)
+		for _, url := range wireCfg.GetServerURLs() {
+			if peers, err := fetchPeersWithStatsFromURL(url + "/peers"); err == nil {
+				return peers, nil
+			}
 		}
 	}
 
