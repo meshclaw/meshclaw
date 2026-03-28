@@ -135,7 +135,7 @@ func InitFromTemplate(templateName, workerName, outputDir string) (string, error
 	}
 
 	if outputDir == "" {
-		outputDir = filepath.Join(WorkersDir(), workerName)
+		outputDir = filepath.Join(AgentsDir(), workerName)
 	}
 
 	if err := os.MkdirAll(outputDir, 0755); err != nil {

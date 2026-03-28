@@ -46,8 +46,8 @@ type Worker struct {
 	Worker string `json:"worker,omitempty"`
 }
 
-// WorkerState represents a running worker
-type WorkerState struct {
+// AgentState represents a running worker
+type AgentState struct {
 	Name      string `json:"name"`
 	PID       int    `json:"pid"`
 	Socket    string `json:"socket"`
@@ -61,9 +61,9 @@ func ConfigDir() string {
 	return filepath.Join(os.Getenv("HOME"), ".meshclaw")
 }
 
-// WorkersDir returns the workers directory
-func WorkersDir() string {
-	return filepath.Join(ConfigDir(), "workers")
+// AgentsDir returns the workers directory
+func AgentsDir() string {
+	return filepath.Join(ConfigDir(), "agents")
 }
 
 // SocketPath returns the socket path for a worker
@@ -117,14 +117,14 @@ func StateDir() string {
 }
 
 // LoadState loads the state for a worker
-func LoadState(name string) (*WorkerState, error) {
+func LoadState(name string) (*AgentState, error) {
 	path := filepath.Join(StateDir(), name+".json")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
 
-	var state WorkerState
+	var state AgentState
 	if err := json.Unmarshal(data, &state); err != nil {
 		return nil, err
 	}
@@ -133,7 +133,7 @@ func LoadState(name string) (*WorkerState, error) {
 }
 
 // SaveState saves the state for a worker
-func SaveState(state *WorkerState) error {
+func SaveState(state *AgentState) error {
 	path := filepath.Join(StateDir(), state.Name+".json")
 	data, err := json.MarshalIndent(state, "", "  ")
 	if err != nil {

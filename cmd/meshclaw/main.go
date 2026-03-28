@@ -90,7 +90,7 @@ func cmdInit(args []string) {
 		os.Exit(1)
 	}
 
-	fmt.Printf("%s✓%s Created worker '%s' from template '%s'\n",
+	fmt.Printf("%s✓%s Created agent '%s' from template '%s'\n",
 		common.Green, common.Reset, name, template)
 	fmt.Printf("  Config: %s\n", configPath)
 	fmt.Println()
@@ -116,18 +116,18 @@ func cmdStart(args []string) {
 	// Find config path
 	configPath := target
 	if !strings.HasSuffix(target, ".json") {
-		// Look in workers directory
-		configPath = meshclaw.WorkersDir() + "/" + target + "/config.json"
+		// Look in agents directory
+		configPath = meshclaw.AgentsDir() + "/" + target + "/config.json"
 	}
 
-	state, err := meshclaw.StartWorker(configPath, foreground)
+	state, err := meshclaw.StartAgent(configPath, foreground)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 
 	if !foreground {
-		fmt.Printf("%s✓%s Started worker '%s' (PID %d)\n",
+		fmt.Printf("%s✓%s Started agent '%s' (PID %d)\n",
 			common.Green, common.Reset, state.Name, state.PID)
 		fmt.Printf("  Socket: %s\n", state.Socket)
 		fmt.Println()
@@ -145,12 +145,12 @@ func cmdStop(args []string) {
 
 	name := args[0]
 
-	if err := meshclaw.StopWorker(name); err != nil {
+	if err := meshclaw.StopAgent(name); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 
-	fmt.Printf("%s✓%s Stopped worker '%s'\n", common.Green, common.Reset, name)
+	fmt.Printf("%s✓%s Stopped agent '%s'\n", common.Green, common.Reset, name)
 }
 
 func cmdRestart(args []string) {
@@ -162,25 +162,25 @@ func cmdRestart(args []string) {
 	name := args[0]
 
 	// Stop if running
-	meshclaw.StopWorker(name)
+	meshclaw.StopAgent(name)
 	time.Sleep(500 * time.Millisecond)
 
 	// Find config and start
-	configPath := meshclaw.WorkersDir() + "/" + name + "/config.json"
-	state, err := meshclaw.StartWorker(configPath, false)
+	configPath := meshclaw.AgentsDir() + "/" + name + "/config.json"
+	state, err := meshclaw.StartAgent(configPath, false)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 
-	fmt.Printf("%s✓%s Restarted worker '%s' (PID %d)\n",
+	fmt.Printf("%s✓%s Restarted agent '%s' (PID %d)\n",
 		common.Green, common.Reset, state.Name, state.PID)
 }
 
 func cmdPS(args []string) {
-	workers, err := meshclaw.ListWorkers()
-	if err != nil || len(workers) == 0 {
-		fmt.Println("No workers found.")
+	agents, err := meshclaw.ListAgents()
+	if err != nil || len(agents) == 0 {
+		fmt.Println("No agents found.")
 		fmt.Println("  Create one with: meshclaw init <name>")
 		return
 	}
@@ -191,11 +191,11 @@ func cmdPS(args []string) {
 	fmt.Printf("  %s%s%s\n", common.Dim, strings.Repeat("-", 60), common.Reset)
 
 	// Sort by name
-	sort.Slice(workers, func(i, j int) bool {
-		return workers[i].Name < workers[j].Name
+	sort.Slice(agents, func(i, j int) bool {
+		return agents[i].Name < agents[j].Name
 	})
 
-	for _, w := range workers {
+	for _, w := range agents {
 		var dot, statusCol string
 		if w.Status == "running" {
 			dot = common.Green + "●" + common.Reset
@@ -247,7 +247,7 @@ func cmdAsk(args []string) {
 	name := args[0]
 	message := strings.Join(args[1:], " ")
 
-	response, err := meshclaw.AskWorker(name, message, 60*time.Second)
+	response, err := meshclaw.AskAgent(name, message, 60*time.Second)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
@@ -267,7 +267,7 @@ func cmdChat(args []string) {
 	// Check if worker is running
 	state, err := meshclaw.LoadState(name)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Worker '%s' not found. Start it with: meshclaw start %s\n", name, name)
+		fmt.Fprintf(os.Stderr, "Agent not found. Start it with: meshclaw start %s\n", name, name)
 		os.Exit(1)
 	}
 
@@ -294,7 +294,7 @@ func cmdChat(args []string) {
 			break
 		}
 
-		response, err := meshclaw.AskWorker(name, message, 120*time.Second)
+		response, err := meshclaw.AskAgent(name, message, 120*time.Second)
 		if err != nil {
 			fmt.Printf("%sError: %v%s\n", common.Red, err, common.Reset)
 			continue
@@ -319,7 +319,7 @@ func cmdRun(args []string) {
 	}
 
 	socketPath := meshclaw.SocketPath(cfg.Name)
-	meshclaw.RunWorkerLoop(cfg, socketPath)
+	meshclaw.RunAgentLoop(cfg, socketPath)
 }
 
 func cmdWebChat(args []string) {
@@ -339,7 +339,7 @@ func cmdWebChat(args []string) {
 	}
 
 	// Load config
-	configPath := meshclaw.WorkersDir() + "/" + name + "/config.json"
+	configPath := meshclaw.AgentsDir() + "/" + name + "/config.json"
 	cfg, err := meshclaw.LoadConfig(configPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -443,7 +443,7 @@ func cmdHelp(args []string) {
 	fmt.Println("    start <name>          Start worker (background)")
 	fmt.Println("    stop <name>           Stop worker")
 	fmt.Println("    restart <name>        Restart worker")
-	fmt.Println("    ps                    List workers")
+	fmt.Println("    ps                    List agents")
 	fmt.Println("    logs <name>           View worker logs")
 	fmt.Println("    ask <name> <msg>      Send message, get response")
 	fmt.Println("    chat <name>           Interactive chat")

@@ -15,8 +15,8 @@ import (
 	"time"
 )
 
-// StartWorker starts a worker process
-func StartWorker(configPath string, foreground bool) (*WorkerState, error) {
+// StartAgent starts a worker process
+func StartAgent(configPath string, foreground bool) (*AgentState, error) {
 	cfg, err := LoadConfig(configPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load config: %w", err)
@@ -30,18 +30,18 @@ func StartWorker(configPath string, foreground bool) (*WorkerState, error) {
 	// Check if already running
 	if state, err := LoadState(cfg.Name); err == nil {
 		if IsProcessRunning(state.PID) {
-			return nil, fmt.Errorf("worker %s is already running (PID %d)", cfg.Name, state.PID)
+			return nil, fmt.Errorf("agent %s is already running (PID %d)", cfg.Name, state.PID)
 		}
 	}
 
 	// Create work directory
-	workDir := filepath.Join(WorkersDir(), cfg.Name)
+	workDir := filepath.Join(AgentsDir(), cfg.Name)
 	if err := os.MkdirAll(workDir, 0755); err != nil {
 		return nil, err
 	}
 
 	// Start the worker process
-	logFile := filepath.Join(workDir, "worker.log")
+	logFile := filepath.Join(workDir, "agent.log")
 	socketPath := SocketPath(cfg.Name)
 
 	// Remove old socket if exists
@@ -49,14 +49,14 @@ func StartWorker(configPath string, foreground bool) (*WorkerState, error) {
 
 	if foreground {
 		// Run in foreground
-		return runWorkerForeground(cfg, configPath, socketPath, logFile)
+		return runAgentForeground(cfg, configPath, socketPath, logFile)
 	}
 
 	// Run as daemon
-	return runWorkerDaemon(cfg, configPath, socketPath, logFile)
+	return runAgentDaemon(cfg, configPath, socketPath, logFile)
 }
 
-func runWorkerDaemon(cfg *Config, configPath, socketPath, logFile string) (*WorkerState, error) {
+func runAgentDaemon(cfg *Config, configPath, socketPath, logFile string) (*AgentState, error) {
 	// Get the meshclaw binary path
 	exe, err := os.Executable()
 	if err != nil {
@@ -81,7 +81,7 @@ func runWorkerDaemon(cfg *Config, configPath, socketPath, logFile string) (*Work
 		return nil, err
 	}
 
-	state := &WorkerState{
+	state := &AgentState{
 		Name:      cfg.Name,
 		PID:       cmd.Process.Pid,
 		Socket:    socketPath,
@@ -101,8 +101,8 @@ func runWorkerDaemon(cfg *Config, configPath, socketPath, logFile string) (*Work
 	return state, nil
 }
 
-func runWorkerForeground(cfg *Config, configPath, socketPath, logFile string) (*WorkerState, error) {
-	state := &WorkerState{
+func runAgentForeground(cfg *Config, configPath, socketPath, logFile string) (*AgentState, error) {
+	state := &AgentState{
 		Name:      cfg.Name,
 		PID:       os.Getpid(),
 		Socket:    socketPath,
@@ -116,12 +116,12 @@ func runWorkerForeground(cfg *Config, configPath, socketPath, logFile string) (*
 	}
 
 	// Run the worker loop
-	RunWorkerLoop(cfg, socketPath)
+	RunAgentLoop(cfg, socketPath)
 	return state, nil
 }
 
-// RunWorkerLoop runs the main worker loop
-func RunWorkerLoop(cfg *Config, socketPath string) {
+// RunAgentLoop runs the main worker loop
+func RunAgentLoop(cfg *Config, socketPath string) {
 	// Create Unix socket
 	listener, err := net.Listen("unix", socketPath)
 	if err != nil {
@@ -131,7 +131,7 @@ func RunWorkerLoop(cfg *Config, socketPath string) {
 	defer listener.Close()
 	defer os.Remove(socketPath)
 
-	fmt.Printf("[%s] Worker started, listening on %s\n", cfg.Name, socketPath)
+	fmt.Printf("[%s] Agent started, listening on %s\n", cfg.Name, socketPath)
 
 	// Create stop channel for graceful shutdown
 	stopCh := make(chan struct{})
@@ -321,16 +321,16 @@ func callOllama(cfg *Config, message string) string {
 	return resp.Response
 }
 
-// StopWorker stops a worker process
-func StopWorker(name string) error {
+// StopAgent stops a worker process
+func StopAgent(name string) error {
 	state, err := LoadState(name)
 	if err != nil {
-		return fmt.Errorf("worker %s not found", name)
+		return fmt.Errorf("agent %s not found", name)
 	}
 
 	if !IsProcessRunning(state.PID) {
 		DeleteState(name)
-		return fmt.Errorf("worker %s is not running", name)
+		return fmt.Errorf("agent %s is not running", name)
 	}
 
 	// Send SIGTERM
@@ -357,15 +357,15 @@ func StopWorker(name string) error {
 	return nil
 }
 
-// ListWorkers lists all workers
-func ListWorkers() ([]*WorkerState, error) {
+// ListAgents lists all workers
+func ListAgents() ([]*AgentState, error) {
 	dir := StateDir()
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, err
 	}
 
-	var workers []*WorkerState
+	var agents []*AgentState
 	for _, entry := range entries {
 		if !strings.HasSuffix(entry.Name(), ".json") {
 			continue
@@ -384,21 +384,21 @@ func ListWorkers() ([]*WorkerState, error) {
 			state.Status = "stopped"
 		}
 
-		workers = append(workers, state)
+		agents = append(agents, state)
 	}
 
-	return workers, nil
+	return agents, nil
 }
 
-// AskWorker sends a message to a worker and gets response
-func AskWorker(name, message string, timeout time.Duration) (string, error) {
+// AskAgent sends a message to a worker and gets response
+func AskAgent(name, message string, timeout time.Duration) (string, error) {
 	state, err := LoadState(name)
 	if err != nil {
-		return "", fmt.Errorf("worker %s not found", name)
+		return "", fmt.Errorf("agent %s not found", name)
 	}
 
 	if !IsProcessRunning(state.PID) {
-		return "", fmt.Errorf("worker %s is not running", name)
+		return "", fmt.Errorf("agent %s is not running", name)
 	}
 
 	// Connect to socket
@@ -426,7 +426,7 @@ func AskWorker(name, message string, timeout time.Duration) (string, error) {
 
 // GetLogs returns logs for a worker
 func GetLogs(name string, lines int) (string, error) {
-	logFile := filepath.Join(WorkersDir(), name, "worker.log")
+	logFile := filepath.Join(AgentsDir(), name, "agent.log")
 
 	if lines <= 0 {
 		lines = 50
