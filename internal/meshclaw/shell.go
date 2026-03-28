@@ -73,8 +73,26 @@ func ParseInput(input string) *ShellCommand {
 		return parseCheckCommand(words, cmd)
 	}
 
+	// Check for workflow patterns (contains "then" or "and")
+	if isWorkflow(input) {
+		cmd.Action = "workflow"
+		cmd.Args = []string{rawInput}
+		return cmd
+	}
+
 	// Pattern matching for run commands
 	return parseRunCommand(input, words)
+}
+
+// isWorkflow checks if input looks like a workflow
+func isWorkflow(input string) bool {
+	return strings.Contains(input, " then ") ||
+		strings.Contains(input, " and then ") ||
+		strings.Contains(input, " -> ") ||
+		strings.Contains(input, " → ") ||
+		strings.Contains(input, " | ") ||
+		strings.Contains(input, " 그리고 ") ||
+		strings.Contains(input, " 다음 ")
 }
 
 // isQuestion checks if input looks like a question
@@ -253,12 +271,47 @@ func ExecuteCommand(cmd *ShellCommand) (string, error) {
 		args := append([]string{"run"}, cmd.Args...)
 		return runMeshclaw(args...)
 
+	case "workflow":
+		return executeWorkflow(cmd.Args[0])
+
 	case "unknown":
 		return fmt.Sprintf("Unknown command: %s\nType 'help' for available commands.", cmd.Raw), nil
 
 	default:
 		return "", fmt.Errorf("unhandled action: %s", cmd.Action)
 	}
+}
+
+// executeWorkflow runs a multi-step workflow
+func executeWorkflow(input string) (string, error) {
+	workflow, err := ParseWorkflow(input)
+	if err != nil {
+		return "", err
+	}
+
+	var output strings.Builder
+	output.WriteString(fmt.Sprintf("\033[36mWorkflow: %d steps\033[0m\n", len(workflow.Steps)))
+
+	result, err := RunWorkflow(workflow, func(step int, agent, status string) {
+		if status == "starting" {
+			output.WriteString(fmt.Sprintf("\n\033[33m[Step %d] %s\033[0m\n", step, agent))
+		} else if status == "completed" {
+			// Already printed via streaming
+		} else {
+			// Streaming output
+			output.WriteString(fmt.Sprintf("  \033[2m[%s]\033[0m %s\n", agent, status))
+		}
+	})
+
+	if err != nil {
+		return output.String(), err
+	}
+
+	if result.Success {
+		output.WriteString(fmt.Sprintf("\n\033[32m✓ Workflow completed (%d steps)\033[0m\n", len(workflow.Steps)))
+	}
+
+	return output.String(), nil
 }
 
 func runMeshclaw(args ...string) (string, error) {
@@ -292,12 +345,15 @@ func shellHelp() string {
     "뉴스"                  → news agent (Korean)
     "노드 보여줘"           → cluster status
 
+  Workflows (chain multiple agents):
+    news then system       → run news, then system check
+    system on g1 | hello   → system on g1, then hello
+
   Examples:
     > news
     > system on g1
     > what's happening?
-    > show nodes
-    > check health on d1
+    > news then system
 
   Type 'exit' to quit.
 `
