@@ -210,7 +210,7 @@ func cmdStatus() {
 
 func testVssh(host string, port int, secret string) bool {
 	addr := fmt.Sprintf("%s:%d", host, port)
-	conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
+	conn, err := net.DialTimeout("tcp", addr, 3*time.Second)
 	if err != nil {
 		return false
 	}
@@ -218,7 +218,7 @@ func testVssh(host string, port int, secret string) bool {
 
 	// Try auth
 	token := vssh.GenerateAuthToken(secret)
-	conn.SetDeadline(time.Now().Add(2 * time.Second))
+	conn.SetDeadline(time.Now().Add(3 * time.Second))
 	conn.Write([]byte(token + "\n"))
 
 	buf := make([]byte, 64)
