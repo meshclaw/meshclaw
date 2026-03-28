@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"math/rand"
 	"net"
 	"net/http"
 	"os"
@@ -18,6 +19,7 @@ import (
 const (
 	GossipInterval = 30 * time.Second
 	GossipTimeout  = 5 * time.Second
+	GossipFanout   = 4 // Number of random peers to gossip with
 	CoordPort      = 8790
 	DefaultNetwork = "default"
 )
@@ -598,8 +600,22 @@ func (s *Server) gossipOnce() {
 		return
 	}
 
-	var wg sync.WaitGroup
+	// Convert map to slice for random selection
+	urls := make([]string, 0, len(coordURLs))
 	for url := range coordURLs {
+		urls = append(urls, url)
+	}
+
+	// Randomly select up to GossipFanout peers
+	if len(urls) > GossipFanout {
+		rand.Shuffle(len(urls), func(i, j int) {
+			urls[i], urls[j] = urls[j], urls[i]
+		})
+		urls = urls[:GossipFanout]
+	}
+
+	var wg sync.WaitGroup
+	for _, url := range urls {
 		wg.Add(1)
 		go func(u string) {
 			defer wg.Done()
