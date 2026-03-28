@@ -30,6 +30,15 @@ func VsshExec(ip, cmd string, timeout time.Duration) (string, error) {
 	return vssh.ExecCommand(ip, VsshPort, secret, cmd)
 }
 
+// VsshPut sends a file to remote server via vssh
+func VsshPut(ip, localPath, remotePath string) error {
+	secret := GetVsshSecret()
+	if secret == "" {
+		return fmt.Errorf("no vssh secret configured")
+	}
+	return vssh.SendFile(ip, VsshPort, secret, localPath, remotePath)
+}
+
 // SSHExec executes a command via standard SSH
 func SSHExec(user, ip, cmd string, port int, timeout time.Duration) (string, error) {
 	if port == 0 {

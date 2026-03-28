@@ -27,6 +27,30 @@ type PeerStats struct {
 	DiskPct   int     `json:"disk_pct,omitempty"`
 	Uptime    string  `json:"uptime,omitempty"`
 	UpdatedAt int64   `json:"updated_at,omitempty"`
+
+	// Extended stats from worker
+	Hostname    string `json:"hostname,omitempty"`
+	OS          string `json:"os,omitempty"`
+	Arch        string `json:"arch,omitempty"`
+	CPUCores    int    `json:"cpu_cores,omitempty"`
+	CPUPct      int    `json:"cpu_pct,omitempty"`
+	MemTotal    int64  `json:"mem_total,omitempty"`
+	MemUsed     int64  `json:"mem_used,omitempty"`
+	SwapTotal   int64  `json:"swap_total,omitempty"`
+	SwapUsed    int64  `json:"swap_used,omitempty"`
+	DiskTotal   int64  `json:"disk_total,omitempty"`
+	DiskUsed    int64  `json:"disk_used,omitempty"`
+	NetRX       int64  `json:"net_rx,omitempty"`
+	NetTX       int64  `json:"net_tx,omitempty"`
+	Procs       int    `json:"procs,omitempty"`
+	Connections int    `json:"connections,omitempty"`
+	DockerCount int    `json:"docker_count,omitempty"`
+	GPUCount    int    `json:"gpu_count,omitempty"`
+	GPUMemUsed  int    `json:"gpu_mem_used,omitempty"`
+	GPUMemTotal int    `json:"gpu_mem_total,omitempty"`
+	GPUUtil     int    `json:"gpu_util,omitempty"`
+	IOWait      int    `json:"io_wait,omitempty"`
+	TopProcess  string `json:"top_process,omitempty"`
 }
 
 // Peer represents a network peer
@@ -46,6 +70,20 @@ type Peer struct {
 // PeersResponse from wire coordinator
 type PeersResponse struct {
 	Peers []Peer `json:"peers"`
+}
+
+// GetPeerStats fetches stats for a specific peer from coordinator
+func GetPeerStats(name string) (*Peer, error) {
+	peers, err := GetPeersWithStats()
+	if err != nil {
+		return nil, err
+	}
+	for _, p := range peers {
+		if p.NodeName == name {
+			return &p, nil
+		}
+	}
+	return nil, fmt.Errorf("peer not found: %s", name)
 }
 
 // GetPeersWithStats fetches peers with stats from coordinator

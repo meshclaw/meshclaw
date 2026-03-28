@@ -5,6 +5,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/meshclaw/meshclaw/internal/common"
@@ -57,6 +58,7 @@ func main() {
 		"init":      cmdInit,
 		"vpn":       cmdVPN,
 		"network":   cmdNetwork,
+		"deploy":    cmdDeploy,
 		"help":      cmdHelp,
 		"-h":        cmdHelp,
 		"--help":    cmdHelp,
@@ -255,144 +257,188 @@ func cmdDetails(args []string) {
 		os.Exit(1)
 	}
 
-	timeout := 15 * time.Second
-
 	fmt.Println()
 	fmt.Printf("  %s%s%s (%s)\n", common.Cyan, name, common.Reset, ip)
 	fmt.Println()
 
-	// System info
-	fmt.Printf("  %s== System ==%s\n", common.Yellow, common.Reset)
-	sysCmd := `hostname -f 2>/dev/null || hostname; uname -sr; cat /etc/os-release 2>/dev/null | grep -E "^(PRETTY_NAME|VERSION_ID)" | head -2 | cut -d= -f2 | tr -d '"' || sw_vers 2>/dev/null | grep -E "ProductName|ProductVersion" | awk '{print $2,$3}'`
-	if out, err := mpop.RemoteExec(name, sysCmd, timeout); err == nil {
-		for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
-			if line != "" {
-				fmt.Printf("  %s\n", line)
-			}
-		}
+	// Try fast path: cached stats from coordinator
+	peer, err := mpop.GetPeerStats(name)
+	if err == nil && peer.Stats != nil && peer.Stats.UpdatedAt > 0 {
+		showCachedDetails(peer)
+		return
 	}
+
+	// Slow path: remote queries in parallel
+	showRemoteDetails(name, ip)
+}
+
+func showCachedDetails(peer *mpop.Peer) {
+	s := peer.Stats
+	now := time.Now().Unix()
+	age := now - s.UpdatedAt
+
+	// System
+	fmt.Printf("  %s== System ==%s\n", common.Yellow, common.Reset)
+	fmt.Printf("  %s\n", s.Hostname)
+	fmt.Printf("  %s/%s\n", s.OS, s.Arch)
 	fmt.Println()
 
 	// CPU
 	fmt.Printf("  %s== CPU ==%s\n", common.Yellow, common.Reset)
-	cpuCmd := `nproc 2>/dev/null || sysctl -n hw.ncpu; cat /proc/loadavg 2>/dev/null | awk '{print "Load: "$1" "$2" "$3}' || sysctl -n vm.loadavg 2>/dev/null | tr -d '{}' | awk '{print "Load: "$1" "$2" "$3}'`
-	if out, err := mpop.RemoteExec(name, cpuCmd, timeout); err == nil {
-		lines := strings.Split(strings.TrimSpace(out), "\n")
-		if len(lines) >= 1 {
-			fmt.Printf("  Cores: %s\n", lines[0])
-		}
-		if len(lines) >= 2 {
-			fmt.Printf("  %s\n", lines[1])
-		}
+	fmt.Printf("  Cores: %d\n", s.CPUCores)
+	fmt.Printf("  Usage: %d%%\n", s.CPUPct)
+	fmt.Printf("  Load: %s\n", s.Load)
+	if s.IOWait > 0 {
+		fmt.Printf("  IOWait: %d%%\n", s.IOWait)
 	}
 	fmt.Println()
 
 	// Memory
 	fmt.Printf("  %s== Memory ==%s\n", common.Yellow, common.Reset)
-	memCmd := `free -h 2>/dev/null | grep -E "Mem|Swap" || vm_stat 2>/dev/null | head -5`
-	if out, err := mpop.RemoteExec(name, memCmd, timeout); err == nil {
-		for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
-			fmt.Printf("  %s\n", line)
-		}
+	fmt.Printf("  Used: %dMB / %dMB (%d%%)\n", s.MemUsed, s.MemTotal, s.MemPct)
+	if s.SwapTotal > 0 {
+		fmt.Printf("  Swap: %dMB / %dMB\n", s.SwapUsed, s.SwapTotal)
 	}
 	fmt.Println()
 
 	// Disk
 	fmt.Printf("  %s== Disk ==%s\n", common.Yellow, common.Reset)
-	diskCmd := `df -h / /home 2>/dev/null | grep -v "^Filesystem" | awk '{print $6": "$3"/"$2" ("$5")"}'`
-	if out, err := mpop.RemoteExec(name, diskCmd, timeout); err == nil {
-		for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
-			if line != "" {
-				fmt.Printf("  %s\n", line)
-			}
-		}
-	}
+	fmt.Printf("  Used: %dGB / %dGB (%d%%)\n", s.DiskUsed, s.DiskTotal, s.DiskPct)
 	fmt.Println()
 
 	// Network
 	fmt.Printf("  %s== Network ==%s\n", common.Yellow, common.Reset)
-	netCmd := `ip -4 addr show 2>/dev/null | grep inet | grep -v "127.0.0.1" | awk '{print $NF": "$2}' || ifconfig 2>/dev/null | grep -E "^[a-z]|inet " | grep -B1 "inet " | grep -v "127.0.0.1" | paste - - | awk '{print $1" "$6}'`
-	if out, err := mpop.RemoteExec(name, netCmd, timeout); err == nil {
-		for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
-			if line != "" {
-				fmt.Printf("  %s\n", line)
-			}
-		}
+	fmt.Printf("  VPN: %s\n", peer.VpnIP)
+	if peer.PublicIP != "" {
+		fmt.Printf("  Public: %s\n", peer.PublicIP)
+	}
+	if s.NetRX > 0 || s.NetTX > 0 {
+		fmt.Printf("  RX: %s  TX: %s\n", formatBytes(s.NetRX), formatBytes(s.NetTX))
 	}
 	fmt.Println()
 
-	// Top processes
-	fmt.Printf("  %s== Top Processes ==%s\n", common.Yellow, common.Reset)
-	procCmd := `ps aux --sort=-%cpu 2>/dev/null | head -6 | tail -5 | awk '{printf "%-6s %-5s %-5s %s\n", $1, $3"%", $4"%", $11}' || ps aux -r 2>/dev/null | head -6 | tail -5 | awk '{printf "%-6s %-5s %-5s %s\n", $1, $3"%", $4"%", $11}'`
-	if out, err := mpop.RemoteExec(name, procCmd, timeout); err == nil {
-		fmt.Printf("  %sUSER   CPU   MEM   CMD%s\n", common.Dim, common.Reset)
-		for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
-			if line != "" {
-				fmt.Printf("  %s\n", line)
-			}
-		}
+	// Processes
+	fmt.Printf("  %s== Processes ==%s\n", common.Yellow, common.Reset)
+	fmt.Printf("  Running: %d\n", s.Procs)
+	fmt.Printf("  Connections: %d\n", s.Connections)
+	if s.TopProcess != "" {
+		fmt.Printf("  Top: %s\n", s.TopProcess)
 	}
 	fmt.Println()
 
-	// Services
-	fmt.Printf("  %s== Services ==%s\n", common.Yellow, common.Reset)
-	svcCmd := `systemctl list-units --type=service --state=running 2>/dev/null | grep -E "wire|vssh|worker|docker|nginx|mysql|postgres|redis|mongo" | awk '{print $1": "$4}' | head -10 || launchctl list 2>/dev/null | grep -E "meshclaw|wire|vssh" | awk '{print $3": running"}'`
-	if out, err := mpop.RemoteExec(name, svcCmd, timeout); err == nil && strings.TrimSpace(out) != "" {
-		for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
-			if line != "" {
-				fmt.Printf("  %s\n", line)
-			}
-		}
-	} else {
-		fmt.Printf("  %s(no monitored services)%s\n", common.Dim, common.Reset)
+	// Docker
+	if s.DockerCount > 0 {
+		fmt.Printf("  %s== Docker ==%s\n", common.Yellow, common.Reset)
+		fmt.Printf("  Containers: %d running\n", s.DockerCount)
+		fmt.Println()
 	}
-	fmt.Println()
 
-	// Docker containers
-	fmt.Printf("  %s== Docker ==%s\n", common.Yellow, common.Reset)
-	dockerCmd := `docker ps --format "{{.Names}}: {{.Status}}" 2>/dev/null | head -10`
-	if out, err := mpop.RemoteExec(name, dockerCmd, timeout); err == nil && strings.TrimSpace(out) != "" {
-		for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
-			if line != "" {
-				fmt.Printf("  %s\n", line)
-			}
-		}
-	} else {
-		fmt.Printf("  %s(no containers)%s\n", common.Dim, common.Reset)
-	}
-	fmt.Println()
-
-	// Listening ports
-	fmt.Printf("  %s== Listening Ports ==%s\n", common.Yellow, common.Reset)
-	portCmd := `ss -tlnp 2>/dev/null | grep LISTEN | awk '{print $4}' | sed 's/.*://' | sort -n | uniq | head -15 | tr '\n' ' ' || netstat -tlnp 2>/dev/null | grep LISTEN | awk '{print $4}' | sed 's/.*://' | sort -n | uniq | head -15 | tr '\n' ' '`
-	if out, err := mpop.RemoteExec(name, portCmd, timeout); err == nil && strings.TrimSpace(out) != "" {
-		fmt.Printf("  %s\n", strings.TrimSpace(out))
-	}
-	fmt.Println()
-
-	// GPU (if available)
-	gpuCmd := `nvidia-smi --query-gpu=name,memory.used,memory.total,utilization.gpu --format=csv,noheader 2>/dev/null | head -4`
-	if out, err := mpop.RemoteExec(name, gpuCmd, timeout); err == nil && strings.TrimSpace(out) != "" {
+	// GPU
+	if s.GPUCount > 0 {
 		fmt.Printf("  %s== GPU ==%s\n", common.Yellow, common.Reset)
-		for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
-			if line != "" {
-				fmt.Printf("  %s\n", line)
+		fmt.Printf("  GPUs: %d\n", s.GPUCount)
+		fmt.Printf("  Memory: %dMB / %dMB\n", s.GPUMemUsed, s.GPUMemTotal)
+		fmt.Printf("  Utilization: %d%%\n", s.GPUUtil)
+		fmt.Println()
+	}
+
+	// Uptime
+	fmt.Printf("  %s== Status ==%s\n", common.Yellow, common.Reset)
+	fmt.Printf("  Uptime: %s\n", s.Uptime)
+	fmt.Printf("  %sStats updated %ds ago%s\n", common.Dim, age, common.Reset)
+	fmt.Println()
+}
+
+func formatBytes(b int64) string {
+	const unit = 1024
+	if b < unit {
+		return fmt.Sprintf("%d B", b)
+	}
+	div, exp := int64(unit), 0
+	for n := b / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %cB", float64(b)/float64(div), "KMGTPE"[exp])
+}
+
+func showRemoteDetails(name, ip string) {
+	timeout := 10 * time.Second
+
+	// Run all queries in parallel
+	type result struct {
+		section string
+		output  string
+	}
+	results := make(chan result, 10)
+
+	queries := map[string]string{
+		"system":  `hostname -f 2>/dev/null || hostname; uname -sr; cat /etc/os-release 2>/dev/null | grep -E "^(PRETTY_NAME|VERSION_ID)" | head -2 | cut -d= -f2 | tr -d '"' || sw_vers 2>/dev/null | grep -E "ProductName|ProductVersion" | awk '{print $2,$3}'`,
+		"cpu":     `nproc 2>/dev/null || sysctl -n hw.ncpu; cat /proc/loadavg 2>/dev/null | awk '{print "Load: "$1" "$2" "$3}' || sysctl -n vm.loadavg 2>/dev/null | tr -d '{}' | awk '{print "Load: "$1" "$2" "$3}'`,
+		"memory":  `free -h 2>/dev/null | grep -E "Mem|Swap" || vm_stat 2>/dev/null | head -5`,
+		"disk":    `df -h / /home 2>/dev/null | grep -v "^Filesystem" | awk '{print $6": "$3"/"$2" ("$5")"}'`,
+		"network": `ip -4 addr show 2>/dev/null | grep inet | grep -v "127.0.0.1" | awk '{print $NF": "$2}' | head -5 || ifconfig 2>/dev/null | grep -E "^[a-z]|inet " | grep -B1 "inet " | grep -v "127.0.0.1" | paste - - | awk '{print $1" "$6}' | head -5`,
+		"procs":   `ps aux --sort=-%cpu 2>/dev/null | head -4 | tail -3 | awk '{printf "%-6s %-5s %-5s %s\n", $1, $3"%", $4"%", $11}' || ps aux -r 2>/dev/null | head -4 | tail -3 | awk '{printf "%-6s %-5s %-5s %s\n", $1, $3"%", $4"%", $11}'`,
+		"docker":  `docker ps --format "{{.Names}}: {{.Status}}" 2>/dev/null | head -5`,
+		"gpu":     `nvidia-smi --query-gpu=name,memory.used,memory.total,utilization.gpu --format=csv,noheader 2>/dev/null | head -4`,
+	}
+
+	var wg sync.WaitGroup
+	for section, cmd := range queries {
+		wg.Add(1)
+		go func(sec, c string) {
+			defer wg.Done()
+			out, _ := mpop.RemoteExec(name, c, timeout)
+			results <- result{sec, strings.TrimSpace(out)}
+		}(section, cmd)
+	}
+
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	// Collect results
+	data := make(map[string]string)
+	for r := range results {
+		data[r.section] = r.output
+	}
+
+	// Print in order
+	sections := []struct {
+		key   string
+		title string
+	}{
+		{"system", "System"},
+		{"cpu", "CPU"},
+		{"memory", "Memory"},
+		{"disk", "Disk"},
+		{"network", "Network"},
+		{"procs", "Top Processes"},
+		{"docker", "Docker"},
+		{"gpu", "GPU"},
+	}
+
+	for _, s := range sections {
+		out := data[s.key]
+		if out == "" && (s.key == "docker" || s.key == "gpu") {
+			continue
+		}
+		fmt.Printf("  %s== %s ==%s\n", common.Yellow, s.title, common.Reset)
+		if out == "" {
+			fmt.Printf("  %s(no data)%s\n", common.Dim, common.Reset)
+		} else {
+			if s.key == "procs" {
+				fmt.Printf("  %sUSER   CPU   MEM   CMD%s\n", common.Dim, common.Reset)
+			}
+			for _, line := range strings.Split(out, "\n") {
+				if line != "" {
+					fmt.Printf("  %s\n", line)
+				}
 			}
 		}
 		fmt.Println()
 	}
-
-	// Recent logins
-	fmt.Printf("  %s== Recent Logins ==%s\n", common.Yellow, common.Reset)
-	loginCmd := `last -n 5 2>/dev/null | head -5 | awk '{print $1" "$3" "$4" "$5" "$6}'`
-	if out, err := mpop.RemoteExec(name, loginCmd, timeout); err == nil && strings.TrimSpace(out) != "" {
-		for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
-			if line != "" {
-				fmt.Printf("  %s\n", line)
-			}
-		}
-	}
-	fmt.Println()
 }
 
 func cmdConfig(args []string) {
@@ -500,6 +546,109 @@ func cmdNetwork(args []string) {
 	cmdVPN(args) // Same as vpn for now
 }
 
+func cmdDeploy(args []string) {
+	if len(args) < 1 {
+		fmt.Println("Usage: mpop deploy <binary> [servers...]")
+		fmt.Println("       mpop deploy vssh           Deploy vssh to all servers")
+		fmt.Println("       mpop deploy mpop           Deploy mpop to all servers")
+		fmt.Println("       mpop deploy worker         Deploy worker to all servers")
+		fmt.Println("       mpop deploy all            Deploy all binaries")
+		fmt.Println("       mpop deploy vssh v1 g1     Deploy to specific servers")
+		return
+	}
+
+	binary := args[0]
+	targetServers := args[1:]
+
+	// Get all servers
+	allServers := mpop.GetServers()
+	if len(allServers) == 0 {
+		fmt.Println("No servers found")
+		return
+	}
+
+	// Filter target servers
+	servers := make(map[string]string)
+	if len(targetServers) == 0 {
+		servers = allServers
+	} else {
+		for _, name := range targetServers {
+			if ip, ok := allServers[name]; ok {
+				servers[name] = ip
+			} else {
+				fmt.Printf("Server not found: %s\n", name)
+			}
+		}
+	}
+
+	if len(servers) == 0 {
+		return
+	}
+
+	// Determine binaries to deploy
+	binaries := []string{}
+	switch binary {
+	case "all":
+		binaries = []string{"vssh", "mpop", "worker"}
+	case "vssh", "mpop", "worker", "wire":
+		binaries = []string{binary}
+	default:
+		fmt.Printf("Unknown binary: %s\n", binary)
+		return
+	}
+
+	fmt.Printf("Deploying %v to %d servers...\n", binaries, len(servers))
+
+	// Deploy in parallel
+	var wg sync.WaitGroup
+	results := make(chan string, len(servers))
+
+	for name, ip := range servers {
+		wg.Add(1)
+		go func(n, addr string) {
+			defer wg.Done()
+
+			// Detect architecture
+			archCmd := "uname -m"
+			arch, err := mpop.RemoteExec(n, archCmd, 5*time.Second)
+			if err != nil {
+				results <- fmt.Sprintf("%s: failed to detect arch", n)
+				return
+			}
+			arch = strings.TrimSpace(arch)
+
+			suffix := "_linux_amd64"
+			if strings.Contains(arch, "aarch64") || strings.Contains(arch, "arm64") {
+				suffix = "_linux_arm64"
+			}
+
+			// Deploy each binary
+			for _, bin := range binaries {
+				localPath := fmt.Sprintf("bin/%s%s", bin, suffix)
+				remotePath := fmt.Sprintf("/usr/local/bin/%s", bin)
+
+				if err := mpop.VsshPut(addr, localPath, remotePath); err != nil {
+					results <- fmt.Sprintf("%s: %s failed - %v", n, bin, err)
+					continue
+				}
+
+				// chmod
+				mpop.VsshExec(addr, fmt.Sprintf("chmod +x %s", remotePath), 5*time.Second)
+			}
+			results <- fmt.Sprintf("%s: OK", n)
+		}(name, ip)
+	}
+
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	for r := range results {
+		fmt.Printf("  %s\n", r)
+	}
+}
+
 func cmdHelp(args []string) {
 	fmt.Println()
 	fmt.Printf("  %smpop%s - MeshPOP Network Operations CLI (Go)\n", common.Cyan, common.Reset)
@@ -511,7 +660,8 @@ func cmdHelp(args []string) {
 	fmt.Println("    peers           List VPN peers")
 	fmt.Println("    exec <srv> <cmd>  Execute command on server")
 	fmt.Println("    servers         List configured servers")
-	fmt.Println("    info <server>   Show server details")
+	fmt.Println("    details <srv>   Show server details (fast)")
+	fmt.Println("    deploy <bin>    Deploy binary to servers")
 	fmt.Println("    vpn             Show VPN status")
 	fmt.Println("    config          Show/set configuration")
 	fmt.Println("    init            Create configuration")
@@ -519,9 +669,10 @@ func cmdHelp(args []string) {
 	fmt.Println()
 	fmt.Println("  Examples:")
 	fmt.Println("    mpop                        Show dashboard")
-	fmt.Println("    mpop exec node1 uname -a    Run command on node1")
-	fmt.Println("    mpop exec all uptime        Run on all servers")
-	fmt.Println("    mpop peers                  Show VPN peers")
+	fmt.Println("    mpop details v1             Show server details")
+	fmt.Println("    mpop exec v1 uname -a       Run command on server")
+	fmt.Println("    mpop deploy vssh            Deploy vssh to all")
+	fmt.Println("    mpop deploy all v1 g1       Deploy all to v1, g1")
 	fmt.Println()
 	fmt.Println("  Environment:")
 	fmt.Println("    WIRE_SERVER_URL    Wire coordinator URL")
