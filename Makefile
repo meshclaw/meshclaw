@@ -42,17 +42,20 @@ linux-arm64:
 		GOOS=linux GOARCH=arm64 go build -ldflags "$(LDFLAGS)" -o bin/$${bin}_linux_arm64 ./cmd/$$bin; \
 	done
 
-# Build for macOS
+# Build for macOS (with codesign)
 darwin:
 	@for bin in $(BINARIES); do \
 		GOOS=darwin GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o bin/$${bin}_darwin_amd64 ./cmd/$$bin; \
+		codesign -s - bin/$${bin}_darwin_amd64 2>/dev/null || true; \
 		GOOS=darwin GOARCH=arm64 go build -ldflags "$(LDFLAGS)" -o bin/$${bin}_darwin_arm64 ./cmd/$$bin; \
+		codesign -s - bin/$${bin}_darwin_arm64 2>/dev/null || true; \
 	done
 
-# Install to /usr/local/bin
+# Install to /usr/local/bin (with codesign for macOS)
 install: build
 	@for bin in $(BINARIES); do \
-		cp bin/$$bin /usr/local/bin/; \
+		sudo cp bin/$$bin /usr/local/bin/; \
+		sudo codesign -s - /usr/local/bin/$$bin 2>/dev/null || true; \
 	done
 
 # Clean build artifacts
