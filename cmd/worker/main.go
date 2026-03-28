@@ -35,7 +35,7 @@ func main() {
 	}
 
 	fmt.Printf("meshclaw worker starting (interval: %v)\n", interval)
-	fmt.Printf("  Coordinator: %s\n", cfg.ServerURL)
+	fmt.Printf("  Coordinators: %d URLs\n", len(cfg.GetServerURLs()))
 	fmt.Printf("  NodeID: %s\n", cfg.NodeID)
 
 	// Run once immediately
@@ -88,21 +88,27 @@ func reportStats(cfg *wire.Config) {
 
 	body, _ := json.Marshal(data)
 
-	url := cfg.ServerURL + "/stats"
-	resp, err := http.Post(url, "application/json", bytes.NewReader(body))
-	if err != nil {
-		fmt.Printf("  [%s] stats report failed: %v\n", time.Now().Format("15:04:05"), err)
-		return
-	}
-	defer resp.Body.Close()
+	// Try all coordinator URLs with failover
+	client := &http.Client{Timeout: 5 * time.Second}
+	var lastErr error
+	for _, baseURL := range cfg.GetServerURLs() {
+		url := baseURL + "/stats"
+		resp, err := client.Post(url, "application/json", bytes.NewReader(body))
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		defer resp.Body.Close()
 
-	if resp.StatusCode != 200 {
-		fmt.Printf("  [%s] stats report failed: HTTP %d\n", time.Now().Format("15:04:05"), resp.StatusCode)
-		return
+		if resp.StatusCode == 200 {
+			fmt.Printf("  [%s] load=%.2f cpu=%d%% mem=%d%% disk=%d%% procs=%d conns=%d\n",
+				time.Now().Format("15:04:05"), stats.LoadValue, stats.CPUPct, stats.MemPct, stats.DiskPct, stats.Procs, stats.Connections)
+			return
+		}
+		lastErr = fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
 
-	fmt.Printf("  [%s] load=%.2f cpu=%d%% mem=%d%% disk=%d%% procs=%d conns=%d\n",
-		time.Now().Format("15:04:05"), stats.LoadValue, stats.CPUPct, stats.MemPct, stats.DiskPct, stats.Procs, stats.Connections)
+	fmt.Printf("  [%s] stats report failed: %v\n", time.Now().Format("15:04:05"), lastErr)
 }
 
 type Stats struct {
