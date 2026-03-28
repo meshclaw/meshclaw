@@ -218,20 +218,28 @@ func executeOnNode(peer mpop.Peer, agentName string) *RunResult {
 		Node: peer.NodeName,
 	}
 
-	// Build command - simple batch execution
-	// Just run a command and get output (for now)
-	cmd := fmt.Sprintf("hostname && echo 'agent:%s' && date", agentName)
+	// Run batch agent on remote node
+	// Find and run meshclaw binary
+	cmd := fmt.Sprintf("export ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY; MC=$(which meshclaw 2>/dev/null || echo /usr/local/bin/meshclaw); [ -x \"$MC\" ] || MC=$HOME/meshclaw; [ -x \"$MC\" ] || { for u in /home/*/meshclaw; do [ -x \"$u\" ] && MC=\"$u\" && break; done; }; $MC batch %s 2>&1", agentName)
 
 	// Try vssh first, then SSH fallback
-	output, err := mpop.VsshExec(peer.VpnIP, cmd, 30*time.Second)
+	output, err := mpop.VsshExec(peer.VpnIP, cmd, 60*time.Second)
 	if err != nil {
-		// Try SSH fallback
-		output, err = mpop.SSHExec("root", peer.VpnIP, cmd, 22, 30*time.Second)
+		// Try SSH fallback with environment forwarding
+		output, err = mpop.SSHExec("root", peer.VpnIP, cmd, 22, 60*time.Second)
 		if err != nil {
 			result.Success = false
 			result.Error = err.Error()
 			return result
 		}
+	}
+
+	// Check for error indicators
+	if strings.Contains(output, "unknown batch agent") ||
+		strings.Contains(output, "command not found") {
+		result.Success = false
+		result.Error = output
+		return result
 	}
 
 	result.Success = true

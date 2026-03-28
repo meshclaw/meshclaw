@@ -38,8 +38,10 @@ func main() {
 		"chat":      cmdChat,
 		"webchat":   cmdWebChat,
 		"run":       cmdRun,
+		"batch":     cmdBatch, // run batch agent locally
 		"_daemon":   cmdDaemon, // internal: run agent loop
 		"nodes":     cmdNodes,
+		"agents":    cmdAgentsList, // list available agents
 		"remote-up": cmdRemoteUp,
 		"templates": cmdTemplates,
 		"help":      cmdHelp,
@@ -588,5 +590,52 @@ func cmdHelp(args []string) {
 		tmpl := meshclaw.GetTemplate(name)
 		fmt.Printf("    %-16s %s\n", name, tmpl.Description)
 	}
+	fmt.Println()
+}
+
+func cmdBatch(args []string) {
+	if len(args) < 1 {
+		fmt.Println("Usage: meshclaw batch <agent>")
+		fmt.Println()
+		fmt.Println("Run a batch agent locally and exit.")
+		fmt.Println()
+		fmt.Println("Available agents:")
+		for _, name := range meshclaw.ListBatchAgents() {
+			agent := meshclaw.BuiltinBatchAgents[name]
+			fmt.Printf("  %-12s %s\n", name, agent.Description)
+		}
+		os.Exit(1)
+	}
+
+	agentName := args[0]
+
+	output, err := meshclaw.RunBatchAgent(agentName)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%sError: %v%s\n", common.Red, err, common.Reset)
+		os.Exit(1)
+	}
+
+	fmt.Println(output)
+}
+
+func cmdAgentsList(args []string) {
+	fmt.Println()
+	fmt.Printf("  %sBatch Agents%s (run once, exit)\n", common.Cyan, common.Reset)
+	fmt.Println()
+	for _, name := range meshclaw.ListBatchAgents() {
+		agent := meshclaw.BuiltinBatchAgents[name]
+		fmt.Printf("  %-12s %s\n", name, agent.Description)
+	}
+	fmt.Println()
+	fmt.Printf("  %sService Agents%s (long-running)\n", common.Cyan, common.Reset)
+	fmt.Println()
+	for _, name := range meshclaw.ListTemplates() {
+		tmpl := meshclaw.GetTemplate(name)
+		fmt.Printf("  %-12s %s\n", name, tmpl.Description)
+	}
+	fmt.Println()
+	fmt.Println("  Run batch:   meshclaw run <agent>")
+	fmt.Println("  Run local:   meshclaw batch <agent>")
+	fmt.Println("  Start svc:   meshclaw start <agent>")
 	fmt.Println()
 }
