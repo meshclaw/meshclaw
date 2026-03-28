@@ -38,3 +38,4 @@ wire-linux-*
 ssh-hosts.md
 vssh-mac
 .env
+scripts/mesh-status.sh
