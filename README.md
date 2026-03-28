@@ -18,16 +18,28 @@ cd meshclaw && go build ./cmd/...
 ### wire - WireGuard Mesh VPN
 
 ```bash
-# First node (coordinator)
-wire install
+# First node (coordinator + relay)
+wire install --relay
 
 # Join existing mesh
 wire install --join http://coordinator:8790
+
+# VPS/public IP nodes (can relay for NAT clients)
+wire up --relay
+
+# NAT clients (auto-select best relay)
+wire up
 
 # Status
 wire status
 wire down
 ```
+
+**Relay Features:**
+- Auto-select relay based on latency
+- Sticky relay (keeps using same relay unless it fails)
+- Auto-failover on relay failure (15s detection)
+- NAT traversal via relay nodes
 
 ### vssh - Remote Shell
 
