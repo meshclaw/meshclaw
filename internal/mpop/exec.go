@@ -56,19 +56,28 @@ func SSHExec(user, ip, cmd string, port int, timeout time.Duration) (string, err
 
 // RemoteExec executes a command on remote server using configured method
 func RemoteExec(serverName, cmd string, timeout time.Duration) (string, error) {
-	cfg, err := LoadConfig()
-	if err != nil {
-		return "", err
+	cfg, _ := LoadConfig()
+
+	// First check config
+	var srv ServerConfig
+	var found bool
+	if cfg != nil {
+		srv, found = cfg.Servers[serverName]
 	}
 
-	srv, ok := cfg.Servers[serverName]
-	if !ok {
+	// If not in config, check discovered peers (wire mesh)
+	if !found {
+		servers := GetServers()
+		if ip, ok := servers[serverName]; ok {
+			return VsshExec(ip, cmd, timeout)
+		}
 		// Try as direct IP
 		if strings.Contains(serverName, ".") {
 			return VsshExec(serverName, cmd, timeout)
 		}
 		return "", fmt.Errorf("server not found: %s", serverName)
 	}
+	_ = srv // use srv below
 
 	// Check if local
 	if srv.Local || serverName == GetMyName() {
