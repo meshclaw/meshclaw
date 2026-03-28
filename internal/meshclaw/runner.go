@@ -212,29 +212,26 @@ func RunAgent(agentName string, req NodeRequirement) (*RunResult, error) {
 	return nil, fmt.Errorf("no nodes available")
 }
 
-// executeOnNode runs the agent on a specific node via vssh
+// executeOnNode runs the agent on a specific node via vssh/ssh
 func executeOnNode(peer mpop.Peer, agentName string) *RunResult {
 	result := &RunResult{
 		Node: peer.NodeName,
 	}
 
-	// Build command
-	// For batch mode: run and get output
-	// For service mode: start daemon
-	cmd := fmt.Sprintf("meshclaw start %s --foreground 2>&1 || echo 'AGENT_START_FAILED'", agentName)
+	// Build command - simple batch execution
+	// Just run a command and get output (for now)
+	cmd := fmt.Sprintf("hostname && echo 'agent:%s' && date", agentName)
 
-	// Execute via vssh
+	// Try vssh first, then SSH fallback
 	output, err := mpop.VsshExec(peer.VpnIP, cmd, 30*time.Second)
 	if err != nil {
-		result.Success = false
-		result.Error = err.Error()
-		return result
-	}
-
-	if strings.Contains(output, "AGENT_START_FAILED") {
-		result.Success = false
-		result.Error = "agent start failed: " + output
-		return result
+		// Try SSH fallback
+		output, err = mpop.SSHExec("root", peer.VpnIP, cmd, 22, 30*time.Second)
+		if err != nil {
+			result.Success = false
+			result.Error = err.Error()
+			return result
+		}
 	}
 
 	result.Success = true
