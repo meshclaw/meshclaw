@@ -38,6 +38,8 @@ func main() {
 		"chat":      cmdChat,
 		"webchat":   cmdWebChat,
 		"run":       cmdRun,
+		"_daemon":   cmdDaemon, // internal: run agent loop
+		"nodes":     cmdNodes,
 		"remote-up": cmdRemoteUp,
 		"templates": cmdTemplates,
 		"help":      cmdHelp,
@@ -305,9 +307,87 @@ func cmdChat(args []string) {
 }
 
 func cmdRun(args []string) {
-	// Internal command: run worker in foreground (used by daemon)
+	// Distributed agent execution
 	if len(args) < 1 {
-		fmt.Println("Usage: meshclaw run <config.json>")
+		fmt.Println("Usage: meshclaw run <agent> [options]")
+		fmt.Println()
+		fmt.Println("Options:")
+		fmt.Println("  --on=<node>    Run on specific node")
+		fmt.Println("  --gpu          Require GPU")
+		fmt.Println("  --dry-run      Show selected node without running")
+		fmt.Println()
+		fmt.Println("Examples:")
+		fmt.Println("  meshclaw run news-agent")
+		fmt.Println("  meshclaw run ml-agent --gpu")
+		fmt.Println("  meshclaw run my-agent --on=g1")
+		os.Exit(1)
+	}
+
+	agentName := args[0]
+	req := meshclaw.NodeRequirement{}
+	dryRun := false
+
+	// Parse options
+	for _, arg := range args[1:] {
+		if strings.HasPrefix(arg, "--on=") {
+			req.Prefer = strings.TrimPrefix(arg, "--on=")
+		} else if arg == "--gpu" {
+			req.GPU = true
+		} else if arg == "--dry-run" {
+			dryRun = true
+		}
+	}
+
+	// Select best nodes
+	candidates, err := meshclaw.SelectNode(req)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	if dryRun {
+		fmt.Printf("%sSelected nodes for '%s':%s\n\n", common.Cyan, agentName, common.Reset)
+		for i, c := range candidates {
+			if i >= 5 {
+				break
+			}
+			marker := " "
+			if i == 0 {
+				marker = common.Green + "→" + common.Reset
+			}
+			fmt.Printf("  %s %-8s  score=%.1f  cpu=%d%%  mem=%d%%  load=%.2f\n",
+				marker, c.Peer.NodeName, c.Score,
+				c.Peer.Stats.CPUPct, c.Peer.Stats.MemPct, c.Peer.Stats.LoadValue)
+		}
+		fmt.Println()
+		return
+	}
+
+	// Run with retry
+	fmt.Printf("%sRunning '%s' on cluster...%s\n", common.Cyan, agentName, common.Reset)
+
+	result, err := meshclaw.RunAgent(agentName, req)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%sError: %v%s\n", common.Red, err, common.Reset)
+		os.Exit(1)
+	}
+
+	if result.Success {
+		fmt.Printf("%s✓%s Agent '%s' started on %s\n",
+			common.Green, common.Reset, agentName, result.Node)
+		if result.Output != "" {
+			fmt.Println(result.Output)
+		}
+	} else {
+		fmt.Fprintf(os.Stderr, "%s✗%s Failed on %s: %s\n",
+			common.Red, common.Reset, result.Node, result.Error)
+		os.Exit(1)
+	}
+}
+
+func cmdDaemon(args []string) {
+	// Internal command: run agent loop in foreground (used by daemon)
+	if len(args) < 1 {
 		os.Exit(1)
 	}
 
@@ -320,6 +400,43 @@ func cmdRun(args []string) {
 
 	socketPath := meshclaw.SocketPath(cfg.Name)
 	meshclaw.RunAgentLoop(cfg, socketPath)
+}
+
+func cmdNodes(args []string) {
+	stats, err := meshclaw.GetNodeStats()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Println()
+	fmt.Printf("  %s%-10s %-15s %5s %5s %5s %4s %s%s\n",
+		common.Dim, "NODE", "IP", "CPU", "MEM", "LOAD", "GPU", "STATUS", common.Reset)
+	fmt.Printf("  %s%s%s\n", common.Dim, strings.Repeat("-", 60), common.Reset)
+
+	for _, s := range stats {
+		var dot, status string
+		if s.Online {
+			dot = common.Green + "●" + common.Reset
+			status = "ready"
+			if s.Reserved {
+				dot = common.Yellow + "●" + common.Reset
+				status = "busy"
+			}
+		} else {
+			dot = common.Red + "○" + common.Reset
+			status = "offline"
+		}
+
+		gpu := "-"
+		if s.GPU > 0 {
+			gpu = fmt.Sprintf("%d", s.GPU)
+		}
+
+		fmt.Printf("  %s %-10s %-15s %4d%% %4d%% %5.2f %4s %s\n",
+			dot, s.Name, s.IP, s.CPU, s.Mem, s.Load, gpu, status)
+	}
+	fmt.Println()
 }
 
 func cmdWebChat(args []string) {
@@ -439,15 +556,23 @@ func cmdHelp(args []string) {
 	fmt.Println("  Usage: meshclaw [command] [options]")
 	fmt.Println()
 	fmt.Println("  Commands:")
-	fmt.Println("    init <name>           Create worker from template")
-	fmt.Println("    start <name>          Start worker (background)")
-	fmt.Println("    stop <name>           Stop worker")
-	fmt.Println("    restart <name>        Restart worker")
-	fmt.Println("    ps                    List agents")
-	fmt.Println("    logs <name>           View worker logs")
+	fmt.Println("    init <name>           Create agent from template")
+	fmt.Println("    start <name>          Start agent locally")
+	fmt.Println("    stop <name>           Stop agent")
+	fmt.Println("    restart <name>        Restart agent")
+	fmt.Println("    ps                    List local agents")
+	fmt.Println("    logs <name>           View agent logs")
 	fmt.Println("    ask <name> <msg>      Send message, get response")
 	fmt.Println("    chat <name>           Interactive chat")
 	fmt.Println("    webchat <name>        Web UI for chat")
+	fmt.Println()
+	fmt.Println("  Distributed:")
+	fmt.Println("    run <agent>           Run agent on best node")
+	fmt.Println("    run <agent> --gpu     Run on node with GPU")
+	fmt.Println("    run <agent> --on=g1   Run on specific node")
+	fmt.Println("    nodes                 Show cluster node stats")
+	fmt.Println()
+	fmt.Println("  Other:")
 	fmt.Println("    remote-up <host> <t>  Deploy to remote server")
 	fmt.Println("    templates             List available templates")
 	fmt.Println("    help                  Show this help")

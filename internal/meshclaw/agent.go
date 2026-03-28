@@ -69,7 +69,7 @@ func runAgentDaemon(cfg *Config, configPath, socketPath, logFile string) (*Agent
 		return nil, err
 	}
 
-	cmd := exec.Command(exe, "run", configPath)
+	cmd := exec.Command(exe, "_daemon", configPath)
 	cmd.Stdout = log
 	cmd.Stderr = log
 	cmd.SysProcAttr = &syscall.SysProcAttr{
