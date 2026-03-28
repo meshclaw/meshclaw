@@ -43,6 +43,7 @@ func main() {
 		"nodes":     cmdNodes,
 		"agents":    cmdAgentsList, // list available agents
 		"remote-up": cmdRemoteUp,
+		"sync-keys": cmdSyncKeys,
 		"templates": cmdTemplates,
 		"help":      cmdHelp,
 		"-h":        cmdHelp,
@@ -366,22 +367,25 @@ func cmdRun(args []string) {
 		return
 	}
 
-	// Run with retry
+	// Run with streaming output
 	fmt.Printf("%sRunning '%s' on cluster...%s\n", common.Cyan, agentName, common.Reset)
 
-	result, err := meshclaw.RunAgent(agentName, req)
+	var selectedNode string
+	result, err := meshclaw.RunAgentStream(agentName, req, func(node, line string) {
+		if selectedNode == "" {
+			selectedNode = node
+			fmt.Printf("%s✓%s Agent running on %s%s%s\n",
+				common.Green, common.Reset, common.Cyan, node, common.Reset)
+		}
+		fmt.Printf("  %s[%s]%s %s\n", common.Dim, node, common.Reset, line)
+	})
+
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%sError: %v%s\n", common.Red, err, common.Reset)
 		os.Exit(1)
 	}
 
-	if result.Success {
-		fmt.Printf("%s✓%s Agent '%s' started on %s\n",
-			common.Green, common.Reset, agentName, result.Node)
-		if result.Output != "" {
-			fmt.Println(result.Output)
-		}
-	} else {
+	if !result.Success {
 		fmt.Fprintf(os.Stderr, "%s✗%s Failed on %s: %s\n",
 			common.Red, common.Reset, result.Node, result.Error)
 		os.Exit(1)
@@ -617,6 +621,88 @@ func cmdBatch(args []string) {
 	}
 
 	fmt.Println(output)
+}
+
+func cmdSyncKeys(args []string) {
+	// Get API key from local keychain (never print key!)
+	apiKey := ""
+
+	// 1. Try macOS Keychain
+	if out, err := exec.Command("security", "find-generic-password", "-s", "anthropic-api-key", "-w").Output(); err == nil {
+		apiKey = strings.TrimSpace(string(out))
+	}
+
+	// 2. Fallback to environment
+	if apiKey == "" {
+		apiKey = os.Getenv("ANTHROPIC_API_KEY")
+	}
+
+	if apiKey == "" {
+		fmt.Fprintf(os.Stderr, "%sError: No API key found in keychain or env%s\n", common.Red, common.Reset)
+		fmt.Println("Set key: security add-generic-password -a $USER -s anthropic-api-key -w 'sk-ant-...'")
+		os.Exit(1)
+	}
+
+	// Validate key format (never show actual key)
+	if !strings.HasPrefix(apiKey, "sk-ant-") {
+		fmt.Fprintf(os.Stderr, "%sWarning: Key doesn't look like Anthropic key%s\n", common.Yellow, common.Reset)
+	}
+
+	fmt.Printf("%sSyncing API key to cluster...%s\n", common.Cyan, common.Reset)
+	fmt.Printf("  Key: %s...%s (masked)\n", apiKey[:12], apiKey[len(apiKey)-4:])
+
+	// Get all nodes via mpop
+	peers, err := meshclaw.GetClusterNodes()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%sError getting nodes: %v%s\n", common.Red, err, common.Reset)
+		os.Exit(1)
+	}
+
+	if len(peers) == 0 {
+		fmt.Println("No nodes found. Is mpop running?")
+		os.Exit(1)
+	}
+
+	// Sync to each node (parallel)
+	type result struct {
+		node    string
+		success bool
+		err     error
+	}
+	results := make(chan result, len(peers))
+
+	for _, peer := range peers {
+		go func(nodeName, ip string) {
+			// Create ~/.meshclaw/env with key
+			// Safe: create dir, write key only to dedicated file
+			cmd := fmt.Sprintf("mkdir -p ~/.meshclaw && echo 'ANTHROPIC_API_KEY=%s' > ~/.meshclaw/env && chmod 600 ~/.meshclaw/env", apiKey)
+
+			// Use vssh exec (handles SSH config fallback automatically)
+			_, err := execCommand("vssh", "exec", nodeName, cmd)
+
+			results <- result{node: nodeName, success: err == nil, err: err}
+		}(peer.Name, peer.IP)
+	}
+
+	// Collect results
+	success := 0
+	failed := 0
+	for i := 0; i < len(peers); i++ {
+		r := <-results
+		if r.success {
+			fmt.Printf("  %s✓%s %s\n", common.Green, common.Reset, r.node)
+			success++
+		} else {
+			fmt.Printf("  %s✗%s %s (error)\n", common.Red, common.Reset, r.node)
+			failed++
+		}
+	}
+
+	fmt.Println()
+	fmt.Printf("Synced to %d/%d nodes\n", success, len(peers))
+	if failed > 0 {
+		fmt.Printf("%s%d nodes failed%s\n", common.Yellow, failed, common.Reset)
+	}
 }
 
 func cmdAgentsList(args []string) {

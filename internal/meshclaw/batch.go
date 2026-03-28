@@ -157,9 +157,60 @@ Respond in 2-3 sentences.`, systemInfo))
 	return fmt.Sprintf("System Report:\n%s\n\nAnalysis: %s", systemInfo, analysis), nil
 }
 
+// getHomeDir returns user home directory (works even if HOME is not set)
+func getHomeDir() string {
+	if home := os.Getenv("HOME"); home != "" {
+		return home
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		return home
+	}
+	return ""
+}
+
+// getAPIKey gets API key from multiple sources
+func getAPIKey() string {
+	// 1. Environment variable
+	if key := os.Getenv("ANTHROPIC_API_KEY"); key != "" {
+		return key
+	}
+
+	// 2. macOS Keychain (via security command)
+	if out, err := exec.Command("security", "find-generic-password", "-s", "anthropic-api-key", "-w").Output(); err == nil {
+		if key := strings.TrimSpace(string(out)); key != "" {
+			return key
+		}
+	}
+
+	home := getHomeDir()
+	if home == "" {
+		return ""
+	}
+
+	// 3. ~/.meshclaw/env (synced keys)
+	if data, err := os.ReadFile(home + "/.meshclaw/env"); err == nil {
+		for _, line := range strings.Split(string(data), "\n") {
+			if strings.HasPrefix(line, "ANTHROPIC_API_KEY=") {
+				return strings.TrimPrefix(line, "ANTHROPIC_API_KEY=")
+			}
+		}
+	}
+
+	// 4. Legacy ~/.env file
+	if data, err := os.ReadFile(home + "/.env"); err == nil {
+		for _, line := range strings.Split(string(data), "\n") {
+			if strings.HasPrefix(line, "ANTHROPIC_API_KEY=") {
+				return strings.TrimPrefix(line, "ANTHROPIC_API_KEY=")
+			}
+		}
+	}
+
+	return ""
+}
+
 // callLLM calls the configured LLM
 func callLLM(prompt string) (string, error) {
-	apiKey := os.Getenv("ANTHROPIC_API_KEY")
+	apiKey := getAPIKey()
 	if apiKey == "" {
 		return "", fmt.Errorf("ANTHROPIC_API_KEY not set")
 	}

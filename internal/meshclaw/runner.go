@@ -1,7 +1,10 @@
 package meshclaw
 
 import (
+	"bufio"
+	"context"
 	"fmt"
+	"os/exec"
 	"sort"
 	"strings"
 	"sync"
@@ -11,9 +14,18 @@ import (
 )
 
 const (
-	StatsFreshnessLimit = 60  // seconds
-	MaxRetries          = 3
-	ReservationTTL      = 30  // seconds
+	StatsFreshnessLimit  = 60  // seconds
+	MaxRetries           = 3
+	ReservationTTL       = 30  // seconds
+	DefaultTimeout       = 120 // seconds - max agent execution time
+	MaxConcurrentGlobal  = 5   // max agents running globally
+	MaxConcurrentPerNode = 2   // max agents per node
+)
+
+var (
+	globalSemaphore = make(chan struct{}, MaxConcurrentGlobal)
+	nodeAgentCount  = make(map[string]int)
+	nodeAgentMu     sync.Mutex
 )
 
 // NodeRequirement specifies requirements for node selection
@@ -219,19 +231,19 @@ func executeOnNode(peer mpop.Peer, agentName string) *RunResult {
 	}
 
 	// Run batch agent on remote node
-	// Find and run meshclaw binary
-	cmd := fmt.Sprintf("export ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY; MC=$(which meshclaw 2>/dev/null || echo /usr/local/bin/meshclaw); [ -x \"$MC\" ] || MC=$HOME/meshclaw; [ -x \"$MC\" ] || { for u in /home/*/meshclaw; do [ -x \"$u\" ] && MC=\"$u\" && break; done; }; $MC batch %s 2>&1", agentName)
+	// Find and run meshclaw binary (key comes from ~/.meshclaw/env)
+	// Set HOME explicitly for vssh exec which doesn't set environment
+	cmd := fmt.Sprintf("export HOME=${HOME:-$(eval echo ~$(whoami))}; MC=$(which meshclaw 2>/dev/null || echo /usr/local/bin/meshclaw); [ -x \"$MC\" ] || MC=$HOME/meshclaw; [ -x \"$MC\" ] || { for u in /home/*/meshclaw; do [ -x \"$u\" ] && MC=\"$u\" && break; done; }; $MC batch %s 2>&1", agentName)
 
-	// Try vssh first, then SSH fallback
-	output, err := mpop.VsshExec(peer.VpnIP, cmd, 60*time.Second)
+	// Use vssh exec (handles SSH config fallback with correct user/host)
+	// Note: using exec.Command directly because mpop.VsshExec has timeout issues
+	execCmd := exec.Command("vssh", "exec", peer.NodeName, cmd)
+	outputBytes, err := execCmd.CombinedOutput()
+	output := string(outputBytes)
 	if err != nil {
-		// Try SSH fallback with environment forwarding
-		output, err = mpop.SSHExec("root", peer.VpnIP, cmd, 22, 60*time.Second)
-		if err != nil {
-			result.Success = false
-			result.Error = err.Error()
-			return result
-		}
+		result.Success = false
+		result.Error = fmt.Sprintf("%v: %s", err, output)
+		return result
 	}
 
 	// Check for error indicators
@@ -244,6 +256,147 @@ func executeOnNode(peer mpop.Peer, agentName string) *RunResult {
 
 	result.Success = true
 	result.Output = output
+	return result
+}
+
+// OutputCallback is called for each line of output during streaming
+type OutputCallback func(node, line string)
+
+// RunAgentStream runs an agent with streaming output
+func RunAgentStream(agentName string, req NodeRequirement, onOutput OutputCallback) (*RunResult, error) {
+	// Global rate limit - wait for semaphore
+	select {
+	case globalSemaphore <- struct{}{}:
+		defer func() { <-globalSemaphore }()
+	case <-time.After(30 * time.Second):
+		return nil, fmt.Errorf("timeout waiting for execution slot (max %d concurrent)", MaxConcurrentGlobal)
+	}
+
+	candidates, err := SelectNode(req)
+	if err != nil {
+		return nil, err
+	}
+
+	taskID := fmt.Sprintf("%s-%d", agentName, time.Now().UnixNano())
+	retries := MaxRetries
+	if retries > len(candidates) {
+		retries = len(candidates)
+	}
+
+	var lastErr error
+	for i := 0; i < retries; i++ {
+		node := candidates[i]
+
+		// Check per-node rate limit
+		if !acquireNodeSlot(node.Peer.NodeName) {
+			continue // Node is busy, try next
+		}
+
+		if !Reserve(node.Peer.NodeName, taskID) {
+			releaseNodeSlot(node.Peer.NodeName)
+			continue
+		}
+
+		result := executeOnNodeStream(node.Peer, agentName, onOutput)
+		Release(node.Peer.NodeName)
+		releaseNodeSlot(node.Peer.NodeName)
+
+		if result.Success {
+			return result, nil
+		}
+
+		lastErr = fmt.Errorf("%s: %s", node.Peer.NodeName, result.Error)
+	}
+
+	if lastErr != nil {
+		return nil, fmt.Errorf("all nodes failed, last error: %w", lastErr)
+	}
+	return nil, fmt.Errorf("no nodes available")
+}
+
+// acquireNodeSlot tries to get an execution slot on a node
+func acquireNodeSlot(nodeName string) bool {
+	nodeAgentMu.Lock()
+	defer nodeAgentMu.Unlock()
+	if nodeAgentCount[nodeName] >= MaxConcurrentPerNode {
+		return false
+	}
+	nodeAgentCount[nodeName]++
+	return true
+}
+
+// releaseNodeSlot releases an execution slot on a node
+func releaseNodeSlot(nodeName string) {
+	nodeAgentMu.Lock()
+	defer nodeAgentMu.Unlock()
+	if nodeAgentCount[nodeName] > 0 {
+		nodeAgentCount[nodeName]--
+	}
+}
+
+// executeOnNodeStream runs agent with streaming output and timeout
+func executeOnNodeStream(peer mpop.Peer, agentName string, onOutput OutputCallback) *RunResult {
+	result := &RunResult{
+		Node: peer.NodeName,
+	}
+
+	// Create context with timeout
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(DefaultTimeout)*time.Second)
+	defer cancel()
+
+	cmd := fmt.Sprintf("export HOME=${HOME:-$(eval echo ~$(whoami))}; MC=$(which meshclaw 2>/dev/null || echo /usr/local/bin/meshclaw); [ -x \"$MC\" ] || MC=$HOME/meshclaw; [ -x \"$MC\" ] || { for u in /home/*/meshclaw; do [ -x \"$u\" ] && MC=\"$u\" && break; done; }; $MC batch %s 2>&1", agentName)
+
+	execCmd := exec.CommandContext(ctx, "vssh", "exec", peer.NodeName, cmd)
+
+	// Get stdout pipe for streaming
+	stdout, err := execCmd.StdoutPipe()
+	if err != nil {
+		result.Success = false
+		result.Error = err.Error()
+		return result
+	}
+
+	// Start command
+	if err := execCmd.Start(); err != nil {
+		result.Success = false
+		result.Error = err.Error()
+		return result
+	}
+
+	// Read and stream output line by line
+	var output strings.Builder
+	scanner := bufio.NewScanner(stdout)
+	for scanner.Scan() {
+		line := scanner.Text()
+		output.WriteString(line + "\n")
+		if onOutput != nil {
+			onOutput(peer.NodeName, line)
+		}
+	}
+
+	// Wait for command to finish
+	err = execCmd.Wait()
+	outputStr := output.String()
+
+	if err != nil {
+		result.Success = false
+		if ctx.Err() == context.DeadlineExceeded {
+			result.Error = fmt.Sprintf("timeout after %ds", DefaultTimeout)
+		} else {
+			result.Error = fmt.Sprintf("%v: %s", err, outputStr)
+		}
+		return result
+	}
+
+	if strings.Contains(outputStr, "unknown batch agent") ||
+		strings.Contains(outputStr, "command not found") {
+		result.Success = false
+		result.Error = outputStr
+		return result
+	}
+
+	result.Success = true
+	result.Output = outputStr
 	return result
 }
 
@@ -293,4 +446,27 @@ type NodeStat struct {
 	Load     float64
 	GPU      int
 	Reserved bool
+}
+
+// ClusterNode is a simple node reference
+type ClusterNode struct {
+	Name string
+	IP   string
+}
+
+// GetClusterNodes returns all known cluster nodes
+func GetClusterNodes() ([]ClusterNode, error) {
+	servers := mpop.GetServers()
+	if len(servers) == 0 {
+		return nil, fmt.Errorf("no peers discovered")
+	}
+
+	nodes := make([]ClusterNode, 0, len(servers))
+	for name, ip := range servers {
+		nodes = append(nodes, ClusterNode{
+			Name: name,
+			IP:   ip,
+		})
+	}
+	return nodes, nil
 }
